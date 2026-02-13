@@ -1,90 +1,91 @@
-# app.py
 import streamlit as st
+import pandas as pd
 from PyPDF2 import PdfReader
-
-# Import YOUR custom machine learning backend
 from knowledge_base import KnowledgeBase
 
-# ==========================================
-# THE STREAMLIT USER INTERFACE
-# ==========================================
-st.set_page_config(page_title="My AI Notes", page_icon="📚")
-st.title("Personal Knowledge Base")
-st.caption("Upload your PDFs or Markdown notes and ask questions about them!")
+st.set_page_config(page_title="NLP Midterm Project", layout="wide")
+st.title("📚 Personal AI Knowledge Dashboard")
 
-# Initialize session state (keeps data alive when the page refreshes)
 if "kb" not in st.session_state:
     st.session_state.kb = KnowledgeBase()
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# --- SIDEBAR: FILE UPLOADER ---
+# --- SIDEBAR: DATA PIPELINE ---
 with st.sidebar:
-    st.header("1. Upload Knowledge")
-    uploaded_files = st.file_uploader("Upload PDFs or Text", accept_multiple_files=True)
+    st.header("⚙️ Data Engineering")
+    files = st.file_uploader("Upload PDF or Markdown", accept_multiple_files=True)
 
-    if st.button("Process & Index Files"):
-        if uploaded_files:
-            with st.spinner("Extracting text and building math vectors..."):
-                # Reset documents if re-indexing
+    if st.button("🚀 Process & Index"):
+        if files:
+            with st.status("Cleaning, Chunking, and Vectorizing...", expanded=True) as status:
                 st.session_state.kb.documents = []
+                st.session_state.kb.cleaning_report = []
+                st.session_state.kb.file_chunk_counts = {}
 
-                for file in uploaded_files:
+                for f in files:
                     text = ""
-                    if file.name.endswith(".pdf"):
-                        reader = PdfReader(file)
-                        for page in reader.pages:
-                            text += page.extract_text() + " "
+                    if f.name.endswith(".pdf"):
+                        reader = PdfReader(f)
+                        text = " ".join([p.extract_text() or "" for p in reader.pages])
                     else:
-                        text = file.read().decode("utf-8")
+                        text = f.read().decode("utf-8")
+                    st.session_state.kb.process_text(f.name, text)
 
-                    # Send text to your backend
-                    st.session_state.kb.process_text(text)
-
-                # Build the mathematical space
                 st.session_state.kb.build_index()
-                st.success(f"Success! Created {len(st.session_state.kb.documents)} text chunks.")
+                status.update(label="✅ Ready!", state="complete")
         else:
-            st.warning("Please upload files first.")
+            st.warning("Please upload documents first.")
 
-# --- MAIN AREA: CHAT INTERFACE ---
-st.header("2. Chat with your Notes")
+# --- UI: ANALYTICS & CLEANING REPORT ---
+if st.session_state.kb.tfidf_matrix is not None:
+    st.subheader("🧹 Preprocessing & Cleaning Report")
+    with st.expander("View Data Reduction Metrics"):
+        st.table(pd.DataFrame(st.session_state.kb.cleaning_report))
+        st.info(
+            "**Decision Log:** We used *Sentence-Aware Punctuation Logic* to ensure chunks represent complete thoughts.")
 
-# Display previous messages
+    st.subheader("Visual Analytics")
+    tab1, tab2 = st.tabs(["Feature Importance", "Corpus Distribution"])
+
+    with tab1:
+        st.write("#### Top 10 Mathematically Significant Keywords")
+        kw_df = st.session_state.kb.get_top_keywords_df(10)
+        st.bar_chart(kw_df.set_index('Keyword'))
+        st.caption("These words have the highest average TF-IDF weights across your dataset.")
+
+    with tab2:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("#### File Contribution")
+            chunk_df = pd.DataFrame(list(st.session_state.kb.file_chunk_counts.items()), columns=['File', 'Chunks'])
+            st.bar_chart(chunk_df.set_index('File'))
+        with col2:
+            st.write("#### Chunk Length Variability")
+            st.line_chart([len(d) for d in st.session_state.kb.documents])
+            st.caption("Shows how punctuation logic naturally varies chunk sizes.")
+
+# --- CHAT RETRIEVAL INTERFACE ---
+st.divider()
 for role, message in st.session_state.chat_history:
     with st.chat_message(role):
         st.markdown(message)
 
-# Handle new user input
-if user_input := st.chat_input("Ask a question about your documents..."):
-    # 1. Show user message
-    st.session_state.chat_history.append(("user", user_input))
+if prompt := st.chat_input("Query your knowledge base..."):
+    st.session_state.chat_history.append(("user", prompt))
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(prompt)
 
-    # 2. Generate and show assistant response
     with st.chat_message("assistant"):
-        # Call your backend search function
-        results = st.session_state.kb.search(user_input)
-
-        if not results:
-            response = "I couldn't find any relevant information. Have you uploaded and indexed your files?"
-            st.markdown(response)
+        results = st.session_state.kb.search(prompt)
+        if results:
+            score, text = results[0]
+            response = f"**Similarity Score: {score:.4f}**\n\n{text}"
+            with st.expander("📊 View Secondary Matches"):
+                for s, t in results[1:]:
+                    st.write(f"**Score {s:.4f}:** {t}")
         else:
-            best_score, best_text = results[0]
+            response = "No relevant matches found."
 
-            # Threshold to ensure it's actually a relevant match
-            if best_score > 0.05:
-                response = f"**Best Match (Similarity Score: {best_score:.2f})**\n\n> {best_text}"
-                st.markdown(response)
-
-                # Midterm Grading Feature: Expandable "Show Math Work"
-                with st.expander("Show Math Breakdown"):
-                    st.write("Calculated via manual Dot Product / Magnitudes.")
-                    for i, (score, chunk) in enumerate(results):
-                        st.caption(f"Rank {i + 1} | Score: {score:.4f} | Snippet: {chunk[:50]}...")
-            else:
-                response = "I couldn't find a strong mathematical match for that query in your documents."
-                st.markdown(response)
-
+        st.markdown(response)
         st.session_state.chat_history.append(("assistant", response))
