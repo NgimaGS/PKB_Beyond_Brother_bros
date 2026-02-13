@@ -1,0 +1,26 @@
+# --- Python Specific ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# --- Streamlit Specific ---
+.streamlit/
+static/
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+
+# --- Project Specific ---
+# Exclude the actual data files you use for testing to keep the repo light
+# Only uncomment the lines below if you don't want to upload your PDFs
+# *.pdf
+# *.md
+# !README.md
+# !SETUP.md
