@@ -2,7 +2,12 @@ import numpy as np
 import re
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
+import nltk
+from nltk.stem import WordNetLemmatizer 
+nltk.download('wordnet')
+nltk.download('omw-1.4')
 
+import unicodedata
 
 class KnowledgeBase:
     def __init__(self, chunk_size=600):
@@ -10,6 +15,7 @@ class KnowledgeBase:
         self.documents_metadata = []
         self.vectorizer = TfidfVectorizer(stop_words='english')
         self.tfidf_matrix = None
+        self.lemmatizer = WordNetLemmatizer()
 
         # Store full content per file for retrieval context
         self.file_contents = {}
@@ -22,11 +28,17 @@ class KnowledgeBase:
         """Advanced NLP Normalization & Noise Reduction."""
         # 1. Case Folding
         text = text.lower()
+        # [NEW] Universal Unicode Normalization used to decompose ligatures (e.g Combine 'fi' into 'f' + 'i')
+        text = unicodedata.normalize('NFKD', text)
         # 2. Strip URLs
         text = re.sub(r'https?://\S+|www\.\S+', '', text)
         # 3. Strip structural symbols but keep . ! ? for sentence splitting
         text = re.sub(r'[^a-z0-9\s\.!?]', ' ', text)
-        # 4. Normalize Whitespace
+        # 3.  Lemmatization
+        # Pad punctuation so "run." becomes "run ."
+        text = re.sub(r'([.!?])', r' \1 ', text)
+        text = " ".join([self.lemmatizer.lemmatize(word, pos='v') for word in text.split()])
+        # 4. Whitespace Normalization
         return re.sub(r'\s+', ' ', text).strip()
 
     def process_text(self, filename, raw_text, page_num=1):
