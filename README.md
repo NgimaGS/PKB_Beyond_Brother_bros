@@ -1,105 +1,76 @@
-# Personal Knowledge Base AI (NLP Midterm)
+# Nexus Intelligence Engine (NLP Foundation)
 
-**Course:** AIGC 5501 - NLP  
-**Project Phase:** Midterm — The Machine Learning Foundation  
-
-This project is a custom-built Search & Retrieval engine that acts as the foundation for a Retrieval-Augmented Generation (RAG) chatbot. It processes personal notes (PDFs and Markdown), vectorizes the text using TF-IDF, and retrieves the most relevant document chunks using **manually calculated Cosine Similarity**.
+**Project Goal:** A professional-grade Semantic Search & Retrieval workspace designed for researcher-level knowledge management. This system implements the "Vector Core" required for Retrieval-Augmented Generation (RAG) within a high-performance, wide-screen interface.
 
 ---
 
-## Key Features (Midterm Requirements)
+## 🧠 NLP Capability Mapping
+The following modern NLP tasks are implemented within the core engine as foundational algorithmic blocks:
 
-* **Data Preprocessing & Cleaning:** Uses Python's `re` module to strip Markdown noise (`#`, `*`, `>`) and normalizes text for clean embedding.
-* **Manual Chunking Strategy:** Implements a custom sliding-window chunking algorithm (Default: 500 characters with a 50-character overlap) to preserve semantic context without diluting the vector.
-* **TF-IDF Vectorization:** Utilizes `scikit-learn`'s `TfidfVectorizer` to weight words based on statistical importance rather than raw frequency.
-* **The "Midterm Twist" (Manual Linear Algebra):** Bypasses high-level similarity libraries. Instead, it manually calculates the **Dot Product** and **Magnitudes (Norms)** using `numpy` to find the nearest neighbor in high-dimensional space.
-* **Interactive UI:** Built with **Streamlit** to provide a seamless chat interface and dynamic file uploading.
-
----
-
-## System Architecture: How It Works
-
-
-
-This application operates in four distinct sequential phases:
-
-**1. Document Ingestion:**
-The user uploads a file (`.pdf` or `.md`) via the Streamlit interface. The system reads the binary data. If it is a PDF, it iterates through every page and extracts the raw text.
-
-**2. Preprocessing & Chunking:**
-Raw text is inherently messy. The application first strips out structural noise (like Markdown headers or excessive line breaks) using regular expressions. It then passes the cleaned text through a "sliding window" chunking algorithm. This splits the massive document into 500-character blocks, with a 50-character overlap between blocks to ensure that concepts split across two chunks do not lose their semantic context.
-
-**3. Vectorization (TF-IDF):**
-The chunks are fed into a Machine Learning vectorizer. Instead of just counting words, the system calculates the Term Frequency-Inverse Document Frequency (TF-IDF). It scales down the impact of tokens that occur very frequently in a given corpus, which are empirically less informative than features that occur in a small fraction of the training corpus. The result is a high-dimensional mathematical matrix representing the entire knowledge base.
-
-
-
-**4. Mathematical Retrieval:**
-When a user asks a question, that question is converted into a vector using the exact same vocabulary. The system then loops through every document chunk in the matrix and calculates the **Cosine Similarity** (measuring the angle between the query vector and the document vector). The chunk with the highest similarity score (closest to 1.0) is returned to the user.
+| NLP Capability | Implementation in Code | Logic Location | AI Methodology |
+| :--- | :--- | :--- | :--- |
+| **Question-Answering** | **Semantic Retrieval:** Finding precise "Answer Units" by calculating the cosine similarity between a natural language query and document vectors. | `knowledge_base.py:search` | **Traditional ML** |
+| **Topic Modelling** | **Feature Importance:** Aggregating global TF-IDF weights to determine the dominant themes/keywords across the corpus. | `knowledge_base.py:get_top_keywords_df` | **Traditional ML** |
+| **Text Classification** | **Vector Feature Extraction:** Converting raw strings into high-dimensional numerical feature vectors using TF-IDF. | `knowledge_base.py:build_index` | **Traditional ML** |
+| **Text Summarization** | **Extractive Chunking:** The "Sentence-Aware Chunking" logic acts as an extractive summarizer by selecting the most relevant segments. | `knowledge_base.py:process_text` | **Traditional ML** |
+| **Context Windowing** | **RAG Foundation:** Provides the specific content segments required for Large Language Models (LLMs) to generate grounded responses. | `app.py:Research Tab` | **Foundation Logic** |
+| **Preprocessing & Normalization** | **NLP Pipeline:** Standardizing base vocabulary (Lemmatization) and noise reduction for semantic consistency. | `knowledge_base.py:clean_text` | **Traditional ML** |
 
 ---
 
-## 📦 Packages & Technologies Used
+## ✨ Professional Workspace Features
 
-* **`streamlit`**: The web framework used to build the interactive Graphical User Interface (GUI). It handles file uploads, session state (keeping data alive across interactions), and rendering the chat window.
-* **`PyPDF2`**: A pure-Python library built as a PDF toolkit. It is used in the ingestion phase to parse the binary data of uploaded PDFs and extract human-readable text from individual pages.
-* **`scikit-learn`**: A premier machine learning library in Python. This project explicitly uses its `TfidfVectorizer` to convert the collection of raw text chunks into a matrix of TF-IDF features. It handles tokenization, building the vocabulary, and automatically applying the TF-IDF weighting formulas.
-* **`numpy`**: The fundamental package for scientific computing in Python. It is used to perform the manual linear algebra required for the midterm twist. Specifically, `np.dot()` calculates the dot product, and `np.linalg.norm()` calculates the vector magnitudes.
-* **`re`**: Python's built-in Regular Expression engine. It is utilized in the data cleaning phase to target and substitute out specific noise patterns (like removing `#` characters and condensing multiple `\n` newlines into single spaces).
-* **`os`**: Python's built-in operating system interface, used to handle secure file path routing and directory management.
+### 1. Multi-Tabbed Research Environment
+*   **💠 Research Hub:** Unified search interface with state-aware loading monitors and persistent result cards.
+*   **📊 Vector Analytics:** Deep-dive into document preprocessing metrics and TF-IDF keyword importance charts.
+*   **⚙️ System Settings:** Centralized hub for knowledge ingestion and engine initialization.
+
+### 2. High-Capacity Knowledge Ingestion
+*   **Recursive Directory Mounting:** Mount any local folder path. The engine automatically scans all sub-folders for PDF and Markdown files.
+*   **Manual Upload Support:** Browser-based uploads for quick, in-memory indexing of document units.
+
+### 3. Unified Nexus Result Cards
+*   **Contextual Intelligence:** Consolidates metadata, match probability, and content segments into a single interactive card.
+*   **Native OS Accessibility:** 
+    *   **📄 Open File:** One-click launch of the source document in its native application (Acrobat, Notepad, etc.).
+    *   **📁 Open Folder:** Automaticaly opens the containing directory and highlights the specific file in Windows Explorer.
+
+### 4. Educational Guidance
+*   **NLP Tooltips:** Every UI component includes a `(?)` hover tooltip explaining the specific NLP mechanic (e.g., Cosine Similarity, Vectorization) at work.
+*   **Vector Metric Captions:** Detailed explanations for "Feature Importance" and the "Preprocessing Pipeline" located within the Analytics suite.
 
 ---
 
-## 📁 Project Structure
+## 🛠 Documentation for Learning
 
-To ensure a professional separation of concerns, the logic is split into an ML backend and a web frontend:
+### 1. The Preprocessing Pipeline (`clean_text`)
+Before a machine can "understand" text, it must be normalized:
+*   **Lemmatization:** Reducing words like "running" or "ran" to their root "run". This ensures that a query for "run" matches documents containing any variation.
+*   **Noise Reduction:** Standardizing NFKD characters and stripping URLs while preserving sentence semantics.
 
-* `knowledge_base.py` : The Machine Learning engine (Vectorization, Chunking, Math).
-* `app.py` : The Streamlit User Interface and session state management.
-* `requirements.txt` : Project dependencies.
+### 2. Semantic Chunking (`process_text`)
+We use **Sentence-Aware Chunking** to break artifacts into "Knowledge Units." This preserves the context of a thought, unlike fixed-length slicing, leading to much higher search precision.
+
+### 3. Vectorization & Mathematical Retrieval (`build_index` & `search`)
+*   **TF-IDF Weights:** We calculate word importance based on global rarity vs. local frequency.
+*   **Cosine Similarity:** We treat every document chunk as a vector in 1000+ dimensional space. We calculate the **Dot Product** divided by the **Magnitudes** to find the "angle" between your question and the documents.
 
 ---
 
-## 🚀 Installation & Setup
+## 🚀 Step-by-Step Installation
 
-This project uses a Python Virtual Environment (`venv`) to ensure all dependencies are isolated and do not conflict with your system's global Python packages.
-
-## 🚀 Step-by-Step Instructions
-
-### Step 1: Open your Terminal
-Open your preferred terminal (Command Prompt, PowerShell, or Terminal) and navigate to your project directory where `app.py` and `requirements.txt` are located.
-
+### Step 1: Create & Activate Environment
 ```bash
-  cd path/to/your/project
+python -m venv venv
+# Windows: venv\Scripts\activate | Mac: source venv/bin/activate
 ```
 
-### Step 2: Create the Virtual Environment
-Run the following command to generate a new folder named venv inside your project directory. This folder will store the isolated Python interpreter.
-
+### Step 2: Install Dependencies
 ```bash
-  python -m venv venv
+pip install -r requirements.txt
 ```
 
-### Step 3: Activate the Virtual Environment
-Before installing packages, you must "enter" the environment. The activation command depends on your Operating System:
-
+### Step 3: Launch Engine
 ```bash
-  venv\Scripts\activate
-```
-
-#### macOS / Linux:
-```bash
-  source venv/bin/activate
-```
-### Step 4: Install Project Requirements
-With the virtual environment active, use pip to install all dependencies listed in the requirements.txt file.
-
-```bash
-  pip install -r requirements.txt
-```
-### Step 4: Install Project Requirements
-Once the installation is complete, launch the web interface using Streamlit.
-
-```bash
-  streamlit run app.py
+streamlit run app.py
 ```
