@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from PyPDF2 import PdfReader
 from knowledge_base import KnowledgeBase
+from llm_service import OllamaService
 import time
 
 # --- PROFESSIONAL PAGE CONFIG ---
@@ -125,6 +126,27 @@ st.markdown("""
         box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
     }
 
+    /* Status Indicators */
+    .status-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+    }
+    .status-online { background-color: #34d399; box-shadow: 0 0 6px rgba(52, 211, 153, 0.4); }
+    .status-offline { background-color: #f87171; box-shadow: 0 0 6px rgba(248, 113, 113, 0.4); }
+
+    /* Summary Card */
+    .summary-card {
+        background: linear-gradient(135deg, #1e293b 0%, #1a2332 100%);
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-top: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+
     /* Custom Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #0e1117; }
@@ -136,6 +158,8 @@ st.markdown("""
 # Initialize Session State
 if "kb" not in st.session_state:
     st.session_state.kb = KnowledgeBase()
+if "llm" not in st.session_state:
+    st.session_state.llm = OllamaService()
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "is_syncing" not in st.session_state:
@@ -150,7 +174,30 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-    uploaded_files = st.file_uploader("Upload Knowledge Base", accept_multiple_files=True, label_visibility="collapsed")
+    # --- Ollama Status Indicator ---
+    st.session_state.llm.reset_status()
+    ollama_ok = st.session_state.llm.is_available()
+    if ollama_ok:
+        st.markdown(
+            '<div style="margin-bottom: 16px;">'
+            '<span class="status-dot status-online"></span>'
+            f'<span style="font-size: 12px; color: #94a3b8;">Neural Engine — <b style="color: #34d399;">Online</b></span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="margin-bottom: 16px;">'
+            '<span class="status-dot status-offline"></span>'
+            '<span style="font-size: 12px; color: #94a3b8;">Ollama — <b style="color: #f87171;">Offline</b></span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    uploaded_files = st.file_uploader("Upload Knowledge Base", 
+                                     accept_multiple_files=True, 
+                                     type=["pdf", "md", "txt", "csv", "xls", "xlsx"],
+                                     label_visibility="collapsed")
 
     if st.button("Initialize System"):
         if uploaded_files:
@@ -176,6 +223,12 @@ with st.sidebar:
                     for i, page in enumerate(reader.pages):
                         p_text = page.extract_text() or ""
                         st.session_state.kb.process_text(f.name, p_text, i + 1)
+                elif f.name.endswith(".csv"):
+                    df = pd.read_csv(f)
+                    st.session_state.kb.process_dataset(f.name, df)
+                elif f.name.endswith((".xls", ".xlsx")):
+                    df = pd.read_excel(f)
+                    st.session_state.kb.process_dataset(f.name, df)
                 else:
                     content = f.read().decode("utf-8")
                     st.session_state.kb.process_text(f.name, content, 1)
@@ -186,14 +239,16 @@ with st.sidebar:
             status_text.markdown(
                 "<span style='color:#34d399; font-size: 13px; font-weight: 500;'>✔ Vector Index Built Successfully</span>",
                 unsafe_allow_html=True)
-            st.session_state.kb.build_index()
+            st.session_state.kb.build_index(st.session_state.llm)
 
             # Welcome Message with Stats
+            llm_status = "🟢 LLM Active" if ollama_ok else "🔴 LLM Offline (search-only mode)"
             welcome_html = f"""
             <div style="background: rgba(37, 99, 235, 0.1); border: 1px solid rgba(37, 99, 235, 0.2); border-radius: 8px; padding: 12px;">
                 <p style="color: #60a5fa; margin: 0; font-size: 14px; font-weight: 500;">
                     System Online. Index contains <b>{len(st.session_state.kb.documents_metadata)}</b> semantic units across <b>{len(uploaded_files)}</b> documents.
                 </p>
+                <p style="color: #94a3b8; margin: 4px 0 0 0; font-size: 12px;">{llm_status}</p>
             </div>
             """
             st.session_state.messages.append({"role": "assistant", "content": welcome_html, "type": "stats"})
@@ -201,17 +256,39 @@ with st.sidebar:
             st.session_state.is_syncing = False
             st.rerun()
 
-    # Show Active Files
+    # Show Active Files with Summarize buttons
     if st.session_state.kb.file_contents:
         st.markdown("<div style='margin-top: 30px; border-top: 1px solid #30363d; padding-top: 20px;'>",
                     unsafe_allow_html=True)
         st.markdown(
             "<p style='font-size: 12px; color: #64748b; font-weight: 600; text-transform: uppercase;'>Active Sources</p>",
             unsafe_allow_html=True)
-        for f in st.session_state.kb.file_contents.keys():
-            st.markdown(
-                f"<div style='display: flex; align-items: center; gap: 8px; margin-bottom: 8px;'><span style='color: #2563eb;'>•</span> <span style='font-size: 13px; color: #cbd5e1;'>{f}</span></div>",
-                unsafe_allow_html=True)
+        for fname in st.session_state.kb.file_contents.keys():
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(
+                    f"<div style='display: flex; align-items: center; gap: 8px; margin-bottom: 4px;'>"
+                    f"<span style='color: #2563eb;'>•</span> "
+                    f"<span style='font-size: 13px; color: #cbd5e1;'>{fname}</span></div>",
+                    unsafe_allow_html=True)
+            with col2:
+                if ollama_ok and st.button("📝", key=f"sum_{fname}", help=f"Summarize {fname}"):
+                    with st.spinner("Summarizing..."):
+                        doc_text = st.session_state.kb.get_document_text(fname)
+                        summary = st.session_state.llm.summarize_text(doc_text, fname)
+                        summary_html = f"""
+                        <div class="summary-card">
+                            <p style="color: #60a5fa; font-size: 12px; font-weight: 600; margin-bottom: 8px;">📝 SUMMARY — {fname}</p>
+                            <p style="color: #d1d5db; font-size: 14px; line-height: 1.7; margin: 0;">{summary}</p>
+                        </div>
+                        """
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": summary_html,
+                            "plain_text": summary,
+                            "type": "summary",
+                        })
+                        st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 # --- MAIN WORKSPACE ---
@@ -235,22 +312,33 @@ if st.session_state.kb.file_contents and not st.session_state.is_syncing:
                 st.markdown(msg["content"], unsafe_allow_html=True)
                 if msg.get("type") == "stats":
                     with st.expander("View Index Analytics"):
-                        st.dataframe(pd.DataFrame(st.session_state.kb.cleaning_report), width='stretch',
-                                     hide_index=True)
-                        st.bar_chart(st.session_state.kb.get_top_keywords_df().set_index('Keyword'), color="#2563eb")
+                        st.dataframe(pd.DataFrame(st.session_state.kb.cleaning_report),
+                                     use_container_width=True, hide_index=True)
+                        # Only plot if keywords are available
+                        keywords_df = st.session_state.kb.get_top_keywords_df()
+                        if not keywords_df.empty:
+                            st.bar_chart(keywords_df.set_index('Keyword'), color="#2563eb")
+                        else:
+                            st.info("Keyword analytics are currently being recalculated for the neural index.")
+                # Show source chunks in expander for RAG answers
+                if msg.get("type") == "rag" and msg.get("sources_html"):
+                    with st.expander("📚 View Source Chunks"):
+                        st.markdown(msg["sources_html"], unsafe_allow_html=True)
 
     # Chat Input & Logic
     if prompt := st.chat_input("Enter your research query..."):
         # Add User Message
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # Get Results
-        results = st.session_state.kb.search(prompt)
+        # Get search results
+        results = st.session_state.kb.search(prompt, st.session_state.llm)
+        context_text = st.session_state.kb.get_context_for_query(prompt, st.session_state.llm)
 
+        # Build source cards HTML (used for both modes)
+        sources_html = ""
         if results:
-            response_html = f"<p style='margin-bottom: 12px; color: #e2e8f0;'>Top semantic matches for: <b>{prompt}</b></p>"
             for res in results:
-                response_html += f"""
+                sources_html += f"""
                 <div class="nexus-card">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
                         <div style="display: flex; flex-direction: column;">
@@ -261,13 +349,46 @@ if st.session_state.kb.file_contents and not st.session_state.is_syncing:
                     </div>
                     <p style="font-size: 0.95rem; color: #d1d5db; line-height: 1.6; margin: 0;">"{res['text']}"</p>
                 </div>"""
-            st.session_state.messages.append({"role": "assistant", "content": response_html})
-        else:
-            st.session_state.messages.append(
-                {"role": "assistant", "content": "No correlations found exceeding the relevance threshold."})
 
-        # Rerun to update chat
-        st.rerun()
+        # --- RAG Mode (Ollama available) ---
+        if ollama_ok and context_text:
+            with chat_box:
+                with st.chat_message("assistant"):
+                    # Stream the LLM response
+                    response_stream = st.session_state.llm.generate_rag_response(
+                        query=prompt,
+                        context_text=context_text,
+                        chat_history=st.session_state.messages,
+                    )
+                    full_response = st.write_stream(response_stream)
+
+                    # Show sources in expander
+                    if sources_html:
+                        with st.expander("📚 View Source Chunks"):
+                            st.markdown(sources_html, unsafe_allow_html=True)
+
+            # Store the completed response
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": full_response,
+                "plain_text": full_response,
+                "sources_html": sources_html,
+                "type": "rag",
+            })
+
+        # --- Fallback Mode (no Ollama or no results) ---
+        else:
+            if results:
+                header = f"<p style='margin-bottom: 12px; color: #e2e8f0;'>Top semantic matches for: <b>{prompt}</b></p>"
+                if not ollama_ok:
+                    header += "<p style='font-size: 12px; color: #f59e0b; margin-bottom: 12px;'>⚠ LLM offline — showing raw search results</p>"
+                response_html = header + sources_html
+                st.session_state.messages.append({"role": "assistant", "content": response_html})
+            else:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": "No correlations found exceeding the relevance threshold."})
+
+            st.rerun()
 
 else:
     # Landing View

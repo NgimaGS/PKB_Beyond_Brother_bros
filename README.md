@@ -1,105 +1,76 @@
-# Personal Knowledge Base AI (NLP Midterm)
+# Personal Knowledge Base AI (NLP Final Project)
 
 **Course:** AIGC 5501 - NLP  
-**Project Phase:** Midterm — The Machine Learning Foundation  
+**Project Phase:** Final — RAG-Powered Knowledge System  
 
-This project is a custom-built Search & Retrieval engine that acts as the foundation for a Retrieval-Augmented Generation (RAG) chatbot. It processes personal notes (PDFs and Markdown), vectorizes the text using TF-IDF, and retrieves the most relevant document chunks using **manually calculated Cosine Similarity**.
-
----
-
-## Key Features (Midterm Requirements)
-
-* **Data Preprocessing & Cleaning:** Uses Python's `re` module to strip Markdown noise (`#`, `*`, `>`) and normalizes text for clean embedding.
-* **Manual Chunking Strategy:** Implements a custom sliding-window chunking algorithm (Default: 500 characters with a 50-character overlap) to preserve semantic context without diluting the vector.
-* **TF-IDF Vectorization:** Utilizes `scikit-learn`'s `TfidfVectorizer` to weight words based on statistical importance rather than raw frequency.
-* **The "Midterm Twist" (Manual Linear Algebra):** Bypasses high-level similarity libraries. Instead, it manually calculates the **Dot Product** and **Magnitudes (Norms)** using `numpy` to find the nearest neighbor in high-dimensional space.
-* **Interactive UI:** Built with **Streamlit** to provide a seamless chat interface and dynamic file uploading.
+This project is an enterprise-grade **Retrieval-Augmented Generation (RAG)** engine. It replaces traditional keyword search (TF-IDF) with **Modern Neural Embeddings** (via `mxbai-embed-large`) to provide deep semantic understanding of personal notes (PDFs, Markdown, Text) and **Datasets (CSV, Excel)**.
 
 ---
 
-## System Architecture: How It Works
+## Key Features
 
-
-
-This application operates in four distinct sequential phases:
-
-**1. Document Ingestion:**
-The user uploads a file (`.pdf` or `.md`) via the Streamlit interface. The system reads the binary data. If it is a PDF, it iterates through every page and extracts the raw text.
-
-**2. Preprocessing & Chunking:**
-Raw text is inherently messy. The application first strips out structural noise (like Markdown headers or excessive line breaks) using regular expressions. It then passes the cleaned text through a "sliding window" chunking algorithm. This splits the massive document into 500-character blocks, with a 50-character overlap between blocks to ensure that concepts split across two chunks do not lose their semantic context.
-
-**3. Vectorization (TF-IDF):**
-The chunks are fed into a Machine Learning vectorizer. Instead of just counting words, the system calculates the Term Frequency-Inverse Document Frequency (TF-IDF). It scales down the impact of tokens that occur very frequently in a given corpus, which are empirically less informative than features that occur in a small fraction of the training corpus. The result is a high-dimensional mathematical matrix representing the entire knowledge base.
-
-
-
-**4. Mathematical Retrieval:**
-When a user asks a question, that question is converted into a vector using the exact same vocabulary. The system then loops through every document chunk in the matrix and calculates the **Cosine Similarity** (measuring the angle between the query vector and the document vector). The chunk with the highest similarity score (closest to 1.0) is returned to the user.
+* **Neural Semantic Search:** Utilizes **Ollama's `mxbai-embed-large`** to generate high-dimensional embeddings for every document chunk, enabling context-aware retrieval.
+* **Optimized Dataset Ingestion:** Handles large CSV and Excel files by chunking them into row-wise blocks for precise data retrieval and performance.
+* **Manual Vector Math:** Performs manual **Cosine Similarity** on dense neural vectors using `numpy` dot products and norms, ensuring full control over the retrieval logic.
+* **LLM-Powered RAG:** Uses **Ollama's Llama 3.1 (8B)** to synthesize natural-language answers grounded in retrieved data.
+* **Real-time Streaming:** Token-by-token response streaming for a seamless user experience.
+* **Multimodal Ingestion:** Native support for PDFs, Markdown, CSV, and Excel spreadsheets.
+* **One-Click Summarization:** Instantly generate AI summaries for any uploaded document or dataset.
+* **Premium Dark UI:** A professional, responsive Streamlit interface with chat history and source attribution.
 
 ---
 
-## 📦 Packages & Technologies Used
+## System Architecture
 
-* **`streamlit`**: The web framework used to build the interactive Graphical User Interface (GUI). It handles file uploads, session state (keeping data alive across interactions), and rendering the chat window.
-* **`PyPDF2`**: A pure-Python library built as a PDF toolkit. It is used in the ingestion phase to parse the binary data of uploaded PDFs and extract human-readable text from individual pages.
-* **`scikit-learn`**: A premier machine learning library in Python. This project explicitly uses its `TfidfVectorizer` to convert the collection of raw text chunks into a matrix of TF-IDF features. It handles tokenization, building the vocabulary, and automatically applying the TF-IDF weighting formulas.
-* **`numpy`**: The fundamental package for scientific computing in Python. It is used to perform the manual linear algebra required for the midterm twist. Specifically, `np.dot()` calculates the dot product, and `np.linalg.norm()` calculates the vector magnitudes.
-* **`re`**: Python's built-in Regular Expression engine. It is utilized in the data cleaning phase to target and substitute out specific noise patterns (like removing `#` characters and condensing multiple `\n` newlines into single spaces).
-* **`os`**: Python's built-in operating system interface, used to handle secure file path routing and directory management.
-
----
-
-## 📁 Project Structure
-
-To ensure a professional separation of concerns, the logic is split into an ML backend and a web frontend:
-
-* `knowledge_base.py` : The Machine Learning engine (Vectorization, Chunking, Math).
-* `app.py` : The Streamlit User Interface and session state management.
-* `requirements.txt` : Project dependencies.
+1. **Ingestion Layer:** Reads files and parses them into text. Datasets are processed in row-blocks for efficiency.
+2. **Neural Core:** Chunks are sent to the local `mxbai-embed-large` model to generate 1024-dimensional embeddings.
+3. **Knowledge Index:** Chunks and their dense vectors are stored in a local memory-resident index.
+4. **Semantic Retrieval:** User queries are embedded and compared against the knowledge base via manual Cosine Similarity math.
+5. **RAG Pipeline:** The most relevant context is injected into Llama 3.1 to produce a grounded, human-like response.
 
 ---
 
-## 🚀 Installation & Setup
+## 📦 Packages & Technologies
 
-This project uses a Python Virtual Environment (`venv`) to ensure all dependencies are isolated and do not conflict with your system's global Python packages.
+* **`streamlit`**: The interactive GUI and streaming framework.
+* **`ollama`**: Local orchestration of Llama 3.1 and Neural Embeddings.
+* **`pandas` & `openpyxl`**: High-performance data processing for spreadsheets.
+* **`numpy`**: Manual linear algebra and vector operations.
+* **`PyPDF2`**: PDF text extraction.
 
-## 🚀 Step-by-Step Instructions
+---
 
-### Step 1: Open your Terminal
-Open your preferred terminal (Command Prompt, PowerShell, or Terminal) and navigate to your project directory where `app.py` and `requirements.txt` are located.
+## 🚀 Setup & Installation
 
-```bash
-  cd path/to/your/project
-```
+### Prerequisites
 
-### Step 2: Create the Virtual Environment
-Run the following command to generate a new folder named venv inside your project directory. This folder will store the isolated Python interpreter.
+1. **Python 3.10+**
+2. **Ollama** ([download from ollama.com](https://ollama.com))
 
-```bash
-  python -m venv venv
-```
-
-### Step 3: Activate the Virtual Environment
-Before installing packages, you must "enter" the environment. The activation command depends on your Operating System:
+### Step 1: Initialize Models
 
 ```bash
-  venv\Scripts\activate
+# Start the server
+ollama serve
+
+# Pull the LLM and Embedding models
+ollama pull llama3.1:8b
+ollama pull mxbai-embed-large
 ```
 
-#### macOS / Linux:
-```bash
-  source venv/bin/activate
-```
-### Step 4: Install Project Requirements
-With the virtual environment active, use pip to install all dependencies listed in the requirements.txt file.
+### Step 2: Environment Setup
 
 ```bash
-  pip install -r requirements.txt
+cd path/to/project
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
 ```
-### Step 4: Install Project Requirements
-Once the installation is complete, launch the web interface using Streamlit.
+
+### Step 3: Run Application
 
 ```bash
-  streamlit run app.py
+streamlit run app.py
 ```
+
+> **Note:** The "Neural Engine" indicator in the sidebar will turn green when both the server and embedding models are available.
