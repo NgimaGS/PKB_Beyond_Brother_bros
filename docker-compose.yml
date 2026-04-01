@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  nlp-engine:
+    build: .
+    container_name: nlp_workspace
+    ports:
+      - "8501:8501"
+    volumes:
+      # Persist the neural cache to the host machine for continuity across restarts
+      - ./data:/app/data
+    environment:
+      # Allow the container to reach the Ollama server running on the HOST machine
+      - OLLAMA_HOST=host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+# 🐋 Usage:
+# --------
+# 1. Ensure Ollama is running on your host machine.
+# 2. Run: docker-compose up --build
+# 3. Access: http://localhost:8501

@@ -5,3 +5,5 @@ numpy
 pandas
 nltk
 pycryptodome
+ollama
+openpyxl
