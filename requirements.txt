@@ -7,3 +7,7 @@ nltk
 pycryptodome
 ollama
 openpyxl
+umap-learn
+plotly
+scipy
+langchain-ollama

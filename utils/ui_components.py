@@ -151,3 +151,119 @@ def render_token_report(input_tokens, eval_tokens, total_tokens):
             </div>
         </div>
     """, unsafe_allow_html=True)
+
+def get_plotly_template():
+    """Returns a customized 'Dark Nebula' theme for Plotly 3D charts."""
+    import plotly.graph_objects as go
+    
+    return go.layout.Template(
+        layout=go.Layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(family='Inter, sans-serif', color='#94a3b8'),
+            scene=dict(
+                xaxis=dict(gridcolor='#334155', zerolinecolor='#334155', showbackground=False),
+                yaxis=dict(gridcolor='#334155', zerolinecolor='#334155', showbackground=False),
+                zaxis=dict(gridcolor='#334155', zerolinecolor='#334155', showbackground=False),
+            ),
+            margin=dict(l=0, r=0, b=0, t=30)
+        )
+    )
+
+def render_spatial_inspector(fig, galaxy_stats=None):
+    """
+    Renders a robust HTML/JS component using official Plotly serialization
+    to ensure the 3D map appears on all browsers, including the Knowledge Inspector.
+    """
+    import plotly.io as pio
+    import streamlit.components.v1 as components
+    import warnings
+
+    # Explicitly suppress the 2026 deprecation notice to keep the user console clean
+    warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*st.components.v1.html.*")
+
+    # Use Official Plotly HTML generation for maximum stability
+    # This includes the full Plotly library and sets up the DIV correctly.
+    base_html = pio.to_html(fig, include_plotlyjs='cdn', full_html=False)
+    
+    html_content = f"""
+    <div style="display:flex; height:700px; background:#0d1117; border-radius:12px; overflow:hidden; border:1px solid #30363d; font-family:sans-serif;">
+        <div id="inspector-pane" style="flex:1; background:rgba(15, 23, 42, 0.7); border-right:1px solid #30363d; padding:20px; color:#e6edf3; overflow-y:auto; backdrop-filter:blur(10px);">
+            <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:#58a6ff; font-weight:600; margin-bottom:15px; border-bottom:1px solid rgba(88, 166, 255, 0.2); padding-bottom:8px;">Knowledge Inspector</div>
+            <div id="inspector-content" style="font-size:13px; line-height:1.6; color:#8b949e;">
+                Hover over a point in the 3D space to inspect knowledge metadata.
+            </div>
+            
+            <div id="galaxy-intelligence" style="margin-top:auto; padding-top:20px; border-top:1px solid #30363d; font-size:11px;">
+                <div style="font-size:9px; text-transform:uppercase; color:#58a6ff; letter-spacing:0.05em; margin-bottom:10px;">
+                    { 'Total Universe Index' if galaxy_stats and 'galaxy_map' in galaxy_stats else 'Galaxy Intelligence' }
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
+                    <div style="background:#161b22; padding:8px; border-radius:4px; border:1px solid #30363d;">
+                        <div style="color:#6e7681; font-size:8px; text-transform:uppercase;">Entities</div>
+                        <div style="color:#f0f6fc; font-size:14px; font-weight:600;">{galaxy_stats.get('docs', 'N/A') if galaxy_stats else 'N/A'}</div>
+                    </div>
+                    <div style="background:#161b22; padding:8px; border-radius:4px; border:1px solid #30363d;">
+                        <div style="color:#6e7681; font-size:8px; text-transform:uppercase;">Fragments</div>
+                        <div style="color:#f0f6fc; font-size:14px; font-weight:600;">{galaxy_stats.get('segments', 'N/A') if galaxy_stats else 'N/A'}</div>
+                    </div>
+                </div>
+                
+                { 
+                  f'''<div style="font-size:9px; text-transform:uppercase; color:#58a6ff; letter-spacing:0.05em; margin:15px 0 8px 0;">Galaxy Directory</div>
+                      <div style="max-height:150px; overflow-y:auto; border:1px solid #30363d; border-radius:4px; background:#0d1117; padding:5px;">
+                          {" ".join([f'<div style="padding:4px 8px; border-bottom:1px solid #161b22; font-size:10px; color:#c9d1d9;"><span style="color:#238636; font-weight:600;">G{k}:</span> {", ".join(v)}</div>' for k, v in galaxy_stats['galaxy_map'].items()])}
+                      </div>''' 
+                  if galaxy_stats and 'galaxy_map' in galaxy_stats else 
+                  f'''<div style="color:#8b949e; line-height:1.4;">
+                        <span style="color:#58a6ff;">●</span> Semantic Core: {", ".join(galaxy_stats['topics']) if galaxy_stats and galaxy_stats.get('topics') else 'Global Index'}
+                      </div>'''
+                }
+            </div>
+        </div>
+        <div id="chart-wrapper" style="flex:3; position:relative;">
+            {base_html}
+        </div>
+    </div>
+    <script>
+        (function() {{
+            function initHoverHook() {{
+                const chartDiv = document.querySelector('.plotly-graph-div');
+                if (!chartDiv) {{
+                    setTimeout(initHoverHook, 100);
+                    return;
+                }}
+                
+                chartDiv.on('plotly_hover', function(data){{
+                    const point = data.points[0];
+                    const custom = point.customdata || [];
+                    
+                    const source = custom[1] || 'Unknown';
+                    const page = custom[2] || 'N/A';
+                    const snippet = custom[3] || 'No snippet available.';
+                    const galaxy = custom[4] || '0';
+                    
+                    document.getElementById('inspector-content').innerHTML = `
+                        <div style="margin-bottom:20px;">
+                            <div style="font-size:9px; color:#58a6ff; margin-bottom:5px; text-transform:uppercase;">Origin Source</div>
+                            <div style="font-size:14px; color:#f0f6fc; font-weight:500;">${{source}}</div>
+                        </div>
+                        <div style="margin-bottom:20px;">
+                            <div style="font-size:9px; color:#58a6ff; margin-bottom:5px; text-transform:uppercase;">Context</div>
+                            <div style="font-size:13px; color:#c9d1d9;">Page ${{page}} // Galaxy: ${{galaxy}}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:9px; color:#58a6ff; margin-bottom:5px; text-transform:uppercase;">Semantic Fragment</div>
+                            <div style="background:#161b22; padding:12px; border-radius:6px; font-size:13px; font-style:italic; border-left:2px solid #238636; line-height:1.6; color:#8b949e;">
+                                "${{snippet}}..."
+                            </div>
+                        </div>
+                    `;
+                }});
+            }}
+            initHoverHook();
+        }})();
+    </script>
+    """
+    # Using v1.html to ensure secure Javascript execution for the hover-inspector hook
+    components.html(html_content, height=720)
