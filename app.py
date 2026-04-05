@@ -134,7 +134,7 @@ with tab_settings:
         st.info("Uses 1024-dimensional dense vectors for contextual understanding.")
 
     # Ingestion Orchestration
-    if st.button("Initialize Engine & Build Index", use_container_width=True):
+    if st.button("Initialize Engine & Build Index", width="stretch"):
         files = []
         if uploaded_files:
             for f in uploaded_files: files.append({'obj': f, 'name': f.name, 'full_path': None})
@@ -170,7 +170,7 @@ with tab_analytics:
         if not keywords_df.empty:
             st.bar_chart(keywords_df.set_index('Keyword'), color="#2563eb", height=300)
         st.markdown("<p class='meta-label' style='margin-top: 30px;'>NLP Pipeline Report</p>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(st.session_state.kb.cleaning_report), use_container_width=True, height=300, hide_index=True)
+        st.dataframe(pd.DataFrame(st.session_state.kb.cleaning_report), width="stretch", height=300, hide_index=True)
 
 # --- PHASE 5: RESEARCH HUB ---
 with tab_research:
