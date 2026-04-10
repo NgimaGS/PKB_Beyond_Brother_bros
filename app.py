@@ -26,11 +26,16 @@ import pandas as pd
 import time
 import os
 import subprocess
+import traceback
+import re
+from datetime import datetime
 
 # Modular Core Imports
 import plotly.express as px
 from core.knowledge_base import KnowledgeBase
 from core.llm_service import OllamaService
+from core.config_manager import ConfigManager
+from core.identity_manager import IdentityManager
 from utils.ui_components import inject_custom_css, render_header, render_sidebar_branding, render_token_report, get_plotly_template
 from utils.file_processor import process_single_file
 
@@ -49,40 +54,51 @@ inject_custom_css()
 if "llm" not in st.session_state: st.session_state.llm = OllamaService()
 if "kb" not in st.session_state: st.session_state.kb = KnowledgeBase()
 if "messages" not in st.session_state: st.session_state.messages = []
+if "config" not in st.session_state: 
+    st.session_state.config = ConfigManager()
+    # Apply initial config to objects
+    st.session_state.llm.model_nickname = st.session_state.config.get("model_nickname")
+    st.session_state.llm.base_url = st.session_state.config.get("ollama_host")
+    st.session_state.kb.engine_mode = st.session_state.config.get("engine_mode")
+    
+    # --- AUTO-LOAD PERSISTENT INDEX ---
+    if os.path.exists("data/index/metadata.json") and not st.session_state.kb.documents_metadata:
+        if st.session_state.kb.load_from_disk():
+            st.toast("✅ Persistent Knowledge Loaded", icon="🧬")
+elif not hasattr(st.session_state.config, 'get'):
+    # Force re-init if the object is stale/broken
+    st.session_state.config = ConfigManager()
+
+# UI State Flags
+if "confirm_clear_err" not in st.session_state: st.session_state.confirm_clear_err = False
+if "is_indexing" not in st.session_state: st.session_state.is_indexing = False
 
 # --- Session Hot-Patch (Ensures backward compatibility with older KB objects) ---
 if not hasattr(st.session_state.kb, 'spatial_granularity'):
     st.session_state.kb.spatial_granularity = "Segments"
 if not hasattr(st.session_state.kb, 'documents_spatial'):
     st.session_state.kb.documents_spatial = []
+if not hasattr(st.session_state.kb, 'indexing_errors'):
+    st.session_state.kb.indexing_errors = []
+if "neural_threshold" not in st.session_state:
+    # Set intelligent default based on active model dimensions
+    dims = st.session_state.llm.get_embedding_dimension()
+    if dims <= 384: st.session_state.neural_threshold = 0.25 # Light (minilm)
+    elif dims <= 768: st.session_state.neural_threshold = 0.30 # Standard (nomic)
+    else: st.session_state.neural_threshold = 0.35 # Dense (mxbai/gemma)
+
+st.session_state.kb.neural_threshold = st.session_state.neural_threshold
+
+if not hasattr(st.session_state.llm, 'model_nickname'):
+    st.session_state.llm.model_nickname = st.session_state.llm.model_name
+
 if "is_syncing" not in st.session_state: st.session_state.is_syncing = False
 if "is_searching" not in st.session_state: st.session_state.is_searching = False
 if "pending_query" not in st.session_state: st.session_state.pending_query = None
 if "view_level" not in st.session_state: st.session_state.view_level = "Universe"
 if "focus_cluster" not in st.session_state: st.session_state.focus_cluster = None
 
-# --- NEW: SESSION SYNCHRONIZATION HUB ---
-# Detects 'stale' objects from previous class definitions and migrates them
-if not hasattr(st.session_state.kb, 'get_cluster_topics'):
-    st.sidebar.warning("🔄 Session Sync Required")
-    if st.sidebar.button("Sync Intelligence Engine", help="Updates the engine structure to enable new Galaxy features without losing your data."):
-        with st.spinner("Synchronizing..."):
-            old_kb = st.session_state.kb
-            new_kb = KnowledgeBase()
-            # Migrate data
-            new_kb.file_contents = getattr(old_kb, 'file_contents', {})
-            new_kb.documents_metadata = getattr(old_kb, 'documents_metadata', [])
-            new_kb.documents_spatial = getattr(old_kb, 'documents_spatial', [])
-            new_kb.tfidf_matrix = getattr(old_kb, 'tfidf_matrix', None)
-            new_kb.vectorizer = getattr(old_kb, 'vectorizer', None)
-            new_kb.embeddings = getattr(old_kb, 'embeddings', None)
-            new_kb.engine_mode = getattr(old_kb, 'engine_mode', "Machine Learning")
-            new_kb.spatial_granularity = getattr(old_kb, 'spatial_granularity', "Segments")
-            new_kb.documents_matrix_agg = getattr(old_kb, 'documents_matrix_agg', None)
-            
-            st.session_state.kb = new_kb
-            st.success("Engine Synchronized.")
-            st.rerun()
+# --- REMOVED: OLD SYNC HUB ---
 
 # --- PHASE 2: MANAGEMENT SIDEBAR ---
 with st.sidebar:
@@ -97,18 +113,36 @@ with st.sidebar:
     if engine_choice != st.session_state.kb.engine_mode:
         st.session_state.kb.engine_mode = engine_choice
         st.warning(f"Engine switched. Re-build index to sync vectors.")
+    
+    # Model Mismatch Check (Neural Only)
+    if engine_choice == "Deep Learning" and hasattr(st.session_state.kb, 'index_embedding_model'):
+        idx_model = st.session_state.kb.index_embedding_model
+        curr_model = st.session_state.llm.embedding_model
+        
+        # Enhanced math comparison
+        idx_dim = getattr(st.session_state.kb, 'index_embedding_dimension', 0)
+        curr_dim = st.session_state.llm.get_embedding_dimension()
+        
+        if idx_model and idx_model != curr_model:
+            dim_warning = f"\nMath: `{idx_dim}d` vs `{curr_dim}d`" if idx_dim != curr_dim else ""
+            st.error(f"⚠️ **Model Mismatch**\nIndex: `{idx_model}`\nActive: `{curr_model}`{dim_warning}\nPlease re-index to sync.")
 
     # 2.2 Neural Server Heartbeat
-    st.session_state.llm.reset_status()
-    ollama_ok = st.session_state.llm.is_available()
-    status_color = "#34d399" if ollama_ok else "#f87171"
-    status_text = "Online" if ollama_ok else "Offline"
-    st.markdown(f"""
-        <div style="margin-top: 10px; margin-bottom: 20px; padding: 12px; background: #1f2937; border-radius: 8px; border: 1px solid #374151;">
-            <p style="font-size: 11px; margin: 0; color: #94a3b8; text-transform: uppercase; font-weight: 600;">Neural Server</p>
-            <p style="font-size: 14px; margin: 4px 0 0 0; font-weight: 600; color: {status_color};">● {status_text}</p>
-        </div>
-    """, unsafe_allow_html=True)
+    ollama_ok = True  # Default for ML mode
+    status_text = "N/A"
+    status_color = "#94a3b8"
+    
+    if engine_choice == "Deep Learning":
+        st.session_state.llm.reset_status()
+        ollama_ok = st.session_state.llm.is_available()
+        status_color = "#34d399" if ollama_ok else "#f87171"
+        status_text = "Online" if ollama_ok else "Offline"
+        st.markdown(f"""
+            <div style="margin-top: 10px; margin-bottom: 20px; padding: 12px; background: #1f2937; border-radius: 8px; border: 1px solid #374151;">
+                <p style="font-size: 11px; margin: 0; color: #94a3b8; text-transform: uppercase; font-weight: 600;">Neural Server</p>
+                <p style="font-size: 14px; margin: 4px 0 0 0; font-weight: 600; color: {status_color};">● {status_text}</p>
+            </div>
+        """, unsafe_allow_html=True)
 
     # --- MOVED: 2.3 Galaxy Explorer / Drill-Down Hub ---
     # Use existing metadata based on current granularity
@@ -131,11 +165,12 @@ with st.sidebar:
         has_topics_method = hasattr(st.session_state.kb, 'get_cluster_topics')
         
         for c in all_clusters:
-            if has_topics_method:
+            if has_topics_method and not st.session_state.is_indexing:
                 topics = st.session_state.kb.get_cluster_topics(c, top_n=2)
                 name = f"Galaxy {c}: {', '.join(topics)}"
             else:
-                name = f"Galaxy {c} (Sync Required)"
+                tag = " (Syncing...)" if st.session_state.is_indexing else " (Sync Required)"
+                name = f"Galaxy {c}{tag}"
             cluster_options.append({"id": c, "name": name})
         
         selected_name = st.selectbox("Focus Galaxy", ["Global View"] + [o['name'] for o in cluster_options], 
@@ -174,19 +209,31 @@ with st.sidebar:
     # 2.5 Knowledge Base Dashboard (Files List)
     if st.session_state.kb.file_contents:
         st.markdown("<p class='meta-label' style='margin-top:20px;'>Active Knowledge Base</p>", unsafe_allow_html=True)
-        kb_files = list(st.session_state.kb.file_contents.keys())
-        for fname in kb_files:
-            c1, c2 = st.columns([4, 1])
-            with c1:
-                st.markdown(f"<span style='font-size: 12px; color: #cbd5e1;'>{fname[:22]}...</span>", unsafe_allow_html=True)
-            with c2:
-                if engine_choice == "Deep Learning" and ollama_ok:
-                    if st.button("📝", key=f"sum_{fname}", help=f"LLM Summary for {fname}"):
-                        with st.spinner("Analyzing..."):
-                            doc_text = st.session_state.kb.get_document_text(fname)
-                            result = st.session_state.llm.summarize_text(doc_text, fname)
-                            st.session_state.messages.append({"role": "assistant", "content": f"### 📝 {fname} Summary\n{result}", "type": "summary"})
-                            st.rerun()
+        manifest = st.session_state.kb.get_file_manifest() if hasattr(st.session_state.kb, 'get_file_manifest') else sorted(list(st.session_state.kb.file_contents.keys()))
+        
+        for fname in manifest:
+            # Full path for tooltip if available
+            full_path = ""
+            # Search metadata for full path
+            for m in st.session_state.kb.documents_metadata:
+                if m['file'] == fname:
+                    full_path = m.get('full_path', 'No path available')
+                    break
+            
+            # Parallax scrolling effect on hover
+            st.markdown(f"""
+                <div class="parallax-wrapper" title="{full_path}">
+                    <div class="parallax-text">{fname}</div>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            if engine_choice == "Deep Learning" and ollama_ok:
+                if st.button("📝 Summarize", key=f"sum_{fname}", help=f"LLM Summary for {fname}", use_container_width=True):
+                    with st.spinner("Analyzing..."):
+                        doc_text = st.session_state.kb.get_document_text(fname)
+                        result = st.session_state.llm.summarize_text(doc_text, fname)
+                        st.session_state.messages.append({"role": "assistant", "content": f"### 📝 {fname} Summary\n{result}", "type": "summary"})
+                        st.rerun()
 
 
     st.markdown("""<div style="margin-top: auto; border-top: 1px solid #30363d; padding-top: 20px;">
@@ -196,19 +243,234 @@ with st.sidebar:
 num_docs = len(st.session_state.kb.file_contents)
 render_header(num_docs, engine_choice, status_text)
 
+# --- GLOBAL SYSTEM HUBS (Sync & Errors) ---
+# This ensures critical alerts are visible regardless of the active tab.
+
+# 1. Sync Hub: Fixes session state issues before they cause crashes
+if not hasattr(st.session_state.kb, 'get_cluster_topics') or not hasattr(st.session_state.kb, 'clear_previous_index'):
+    with st.container(border=True):
+        st.error("🚨 ENGINE SYNCHRONIZATION REQUIRED")
+        st.markdown("Your session is using an older version of the Intelligence Engine. Please synchronize to enable new Galaxy features and Progressive Ingestion.")
+        if st.button("🚀 Sync Intelligence Engine Now", width="stretch", type="primary"):
+            with st.spinner("Synchronizing Vectors..."):
+                old_kb = st.session_state.kb
+                new_kb = KnowledgeBase()
+                # Migrate data
+                new_kb.file_contents = getattr(old_kb, 'file_contents', {})
+                new_kb.documents_metadata = getattr(old_kb, 'documents_metadata', [])
+                new_kb.documents_spatial = getattr(old_kb, 'documents_spatial', [])
+                new_kb.tfidf_matrix = getattr(old_kb, 'tfidf_matrix', None)
+                new_kb.vectorizer = getattr(old_kb, 'vectorizer', None)
+                new_kb.embeddings = getattr(old_kb, 'embeddings', None)
+                new_kb.engine_mode = getattr(old_kb, 'engine_mode', "Machine Learning")
+                new_kb.spatial_granularity = getattr(old_kb, 'spatial_granularity', "Segments")
+                new_kb.documents_matrix_agg = getattr(old_kb, 'documents_matrix_agg', None)
+                st.session_state.kb = new_kb
+                st.rerun()
+    st.markdown("---")
+
+# 2. Global Error Hub: Persistent visibility for ingestion issues
+if hasattr(st.session_state.kb, 'indexing_errors') and st.session_state.kb.indexing_errors:
+    with st.container(border=True):
+        st.markdown(f"### ⚠️ Ingestion Report: {len(st.session_state.kb.indexing_errors)} Errors")
+        full_report = "[\n" + ",\n".join(st.session_state.kb.indexing_errors) + "\n]"
+        with st.expander("View Technical Tracebacks", expanded=False):
+            st.code(full_report, language="text")
+        
+        c_clear, c_copy = st.columns([1, 1])
+        with c_clear:
+            with st.popover("✨ Clear Progress Logs", use_container_width=True):
+                st.markdown("### 💠 Ingestion Pulse Control")
+                st.write("This will permanently clear all ingestion tracebacks and internal error reports from the current session.")
+                if st.button("Confirm Reset", type="primary", use_container_width=True, key="pop_confirm_clear"):
+                    st.session_state.kb.indexing_errors = []
+                    if hasattr(st.session_state.kb, 'ingestion_log'):
+                        st.session_state.kb.ingestion_log = None
+                    st.rerun()
+        with c_copy:
+            # Highlighting the native copy button
+            st.button("ℹ️ Use Copy in Expander", use_container_width=True, disabled=True, help="Use the copy button in the 'View Technical Tracebacks' section above.")
+
+# --- NEW: DETAILED INGESTION ANALYTICS (PULLED OUT OF ERROR BLOCK) ---
+if hasattr(st.session_state.kb, 'ingestion_log') and st.session_state.kb.ingestion_log:
+    with st.expander("📂 Knowledge Scoping Report", expanded=False):
+        log = st.session_state.kb.ingestion_log
+        colL1, colL2, colL3 = st.columns(3)
+        colL1.metric("Total Items Found", log['total_found'])
+        colL2.metric("Skipped (Format)", len(log['skipped']))
+        colL3.metric("Unreachable (Cloud)", len(log['unreachable']))
+        
+        if log['unreachable']:
+            st.error("### ❌ Unreachable Files (Hydration Issues)")
+            st.write("These files exist but could not be read. If using Google Drive, please open the folder in Windows Explorer to 'hydrate' them.")
+            st.code("\n".join(log['unreachable']), language="text")
+        
+        if log['skipped']:
+            st.warning("### ⚠️ Unsupported Formats")
+            st.write("These files were ignored because their format is not yet supported (.docx, .pptx, etc).")
+            st.code("\n".join(log['skipped']), language="text")
+
 # --- PHASE 3 & 4: CATEGORIZED SETTINGS & ANALYTICS ---
 tab_research, tab_analytics, tab_settings = st.tabs(["💠 Research Hub", "📊 Vector Analytics", "⚙️ System Settings"])
 
 with tab_settings:
     st.markdown("### ⚙️ System Configuration")
     
-    # 3.1 GENERAL SECTION
+    # --- RELOCATED: 3.0 PROCESS ORCHESTRATION (THE "DASHBOARD") ---
+    if "is_indexing" not in st.session_state: st.session_state.is_indexing = False
+    
+    if not st.session_state.is_indexing:
+        if st.button("🚀 Initialize Engine & Build Index", width="stretch", type="primary"):
+            st.session_state.is_indexing = True
+            st.session_state.kb.stop_requested = False
+            st.session_state.kb_already_cleared = False
+            # REMOVED: st.rerun() - Let the script flow naturally into the processor below.
+
+    else:
+        # Stop Indexing Button (Disabled if threshold reached)
+        stop_disabled = getattr(st.session_state, 'kb_already_cleared', False)
+        if st.button("🛑 Stop Indexing", width="stretch", type="secondary", disabled=stop_disabled):
+            st.session_state.kb.stop_requested = True
+            st.session_state.is_indexing = False
+            st.rerun()
+        if stop_disabled:
+            st.info("Commit threshold reached. Stopping is no longer possible.")
+
+    # --- TOP-ANCHORED PROGRESS SLOTS ---
+    prog_placeholder = st.empty()
+    status_placeholder = st.empty()
+
+
+    # Note: Process Orchestration loop relocated here for immediate UI visibility.
+    # --- RELOCATED: 3.1 INPUT SOURCES (Required for indexing loop) ---
     with st.expander("📂 General Ingestion Settings", expanded=True):
         colS1, colS2 = st.columns(2)
         with colS1:
-            uploaded_files = st.file_uploader("Upload Knowledge", accept_multiple_files=True, type=["pdf", "md", "txt", "csv", "xlsx"])
+            uploaded_files = st.file_uploader("Upload Knowledge", accept_multiple_files=True, 
+                                              type=["pdf", "md", "txt", "csv", "xlsx", "docx", "pptx"],
+                                              key="uploaded_files_input")
         with colS2:
-            directory_path = st.text_input("Local Directory Path", placeholder="C:\\Users\\...")
+            directory_path = st.text_input("Local Directory Path", placeholder="C:\\Users\\...",
+                                           key="directory_path_input")
+            
+            # --- NEW: PROACTIVE PATH VALIDATION ---
+            if st.button("🔍 Test Path Visibility", use_container_width=True):
+                test_p = st.session_state.directory_path_input.strip().strip('"').strip("'")
+                if test_p:
+                    if os.path.isdir(test_p):
+                        t_folders, t_files, t_supported, t_unreachable = 0, 0, 0, 0
+                        supported_ext = (".pdf", ".md", ".txt", ".csv", ".xlsx", ".docx", ".pptx")
+                        with st.status(f"Scanning `{test_p}`...", expanded=True):
+                            for r, ds, fs in os.walk(test_p):
+                                t_folders += 1
+                                t_files += len(fs)
+                                for f in fs:
+                                    if f.lower().endswith(supported_ext):
+                                        t_supported += 1
+                                        # Hydration Check (Strict)
+                                        try:
+                                            full_p = os.path.join(r, f)
+                                            with open(full_p, 'rb') as tmp:
+                                                tmp.read(1)
+                                        except Exception:
+                                            t_unreachable += 1
+                                            t_supported -= 1
+
+                        if t_supported > 0:
+                            st.success(f"### ✅ Path Verified\n"
+                                       f"- **Folders Scanned**: {t_folders}\n"
+                                       f"- **Files Seen**: {t_files}\n"
+                                       f"- **Ready to Index**: {t_supported}\n"
+                                       f"- **Unreachable (Cloud)**: {t_unreachable}")
+                        elif t_unreachable > 0:
+                            st.error(f"### ⚠️ Drive Hydration Required\n"
+                                     f"Found **{t_unreachable}** potential matches, but they are all **'Cloud-Only'**. \n\n"
+                                     "Please right-click the folder in Windows Explorer and select **'Always keep on this device'** to fix this.")
+                        else:
+                            st.warning(f"### 🔍 Scan Complete: 0 Matches\n"
+                                       f"- **Folders Scanned**: {t_folders}\n"
+                                       f"- **Total Files Seen**: {t_files}\n"
+                                       "No files matching supported extensions were found.")
+                    else:
+                        st.error(f"### ❌ Path Not Found\nThe directory either doesn't exist or is inaccessible: `{test_p}`")
+                else:
+                    st.warning("Please enter a path first.")
+
+
+        
+        st.markdown("---")
+        colL1, colL2, colL3 = st.columns(3)
+        with colL1:
+            log_path = st.text_input("Default Log Path", st.session_state.config.get("log_path"), 
+                                     help="Directory where persistent error logs are saved.")
+            if log_path != st.session_state.config.get("log_path"):
+                st.session_state.config.save({"log_path": log_path})
+        with colL2:
+            log_pattern = st.text_input("Log Naming Pattern", st.session_state.config.get("log_pattern"), 
+                                        help="Use strftime symbols like %Y-%m-%d for timestamps.")
+            if log_pattern != st.session_state.config.get("log_pattern"):
+                st.session_state.config.save({"log_pattern": log_pattern})
+        with colL3:
+            threshold = st.slider("KB Clear Threshold (%)", 0, 100, st.session_state.config.get("clearing_threshold"),
+                                  help="The old KB will be purged once new indexing reaches this percentage.")
+            if threshold != st.session_state.config.get("clearing_threshold"):
+                st.session_state.config.save({"clearing_threshold": threshold})
+
+        # --- PERSISTENT STORAGE MANAGEMENT ---
+        st.markdown("---")
+        st.markdown("#### 💾 Persistent Storage")
+        if os.path.exists("data/index"):
+            c_save, c_wipe, c_load = st.columns(3)
+            with c_save:
+                if st.button("💾 Force Save", use_container_width=True):
+                    if st.session_state.kb.save_to_disk():
+                        st.toast("✅ Index Saved", icon="💾")
+            with c_wipe:
+                if st.button("🗑️ Wipe Saved", use_container_width=True, type="secondary"):
+                    import shutil
+                    if os.path.exists("data/index"):
+                        shutil.rmtree("data/index")
+                        st.session_state.kb.documents_metadata = []
+                        st.session_state.kb.file_contents = {}
+                        st.toast("🔥 Persistence Wiped", icon="🗑️")
+                        st.rerun()
+            with c_load:
+                if st.button("🧬 Load from Disk", use_container_width=True):
+                    if st.session_state.kb.load_from_disk():
+                        st.toast("🧬 Knowledge Restored", icon="✅")
+                        st.rerun()
+        else:
+            st.info("No persistent index found at data/index/. It will be created after your first successful build.")
+
+        # --- MOVED: INGESTION CONSTRAINTS ---
+        st.markdown("---")
+        st.markdown("#### 📏 Ingestion Constraints")
+        c_act, c_sz = st.columns([1, 2])
+        with c_act:
+            is_active = st.toggle("Limit File Size", st.session_state.config.get("ingestion_size_limit_active"),
+                                  help="If enabled, files larger than the threshold will be skipped.")
+            if is_active != st.session_state.config.get("ingestion_size_limit_active"):
+                st.session_state.config.save({"ingestion_size_limit_active": is_active})
+        with c_sz:
+            size_mb = st.number_input("Max File Size (MB)", 1, 1000, st.session_state.config.get("ingestion_size_limit_mb"),
+                                      disabled=not is_active, help="Maximum allowed file size in Megabytes.")
+            if size_mb != st.session_state.config.get("ingestion_size_limit_mb"):
+                st.session_state.config.save({"ingestion_size_limit_mb": size_mb})
+        if is_active:
+            st.info(f"Note: Files over **{size_mb} MB** will be ignored during the scan.")
+
+
+        
+
+
+
+
+
+
+        
+
+
+    # 3.2 MACHINE LEARNING SECTION
 
     # 3.2 MACHINE LEARNING SECTION
     with st.expander("📊 Machine Learning (TF-IDF) Parameters", expanded=False):
@@ -220,55 +482,300 @@ with tab_settings:
 
     # 3.3 DEEP LEARNING SECTION
     with st.expander("🧠 Deep Learning (Neural) Parameters", expanded=False):
-        st.write(f"Active Model: **{st.session_state.llm.model_name}**")
-        st.write(f"Embedding Engine: **{st.session_state.llm.embedding_model}**")
-        st.info("Uses 1024-dimensional dense vectors for contextual understanding.")
+        colA1, colA2 = st.columns(2)
+        with colA1:
+            st.write(f"Active Model: **{st.session_state.llm.model_name}**")
+            st.write(f"Embedding Engine: **{st.session_state.llm.embedding_model}**")
+            
+            # 3.3.1 Chat Model with Refresh
+            chat_models = st.session_state.llm.get_chat_models()
+            col_chat, col_refresh1 = st.columns([4, 1])
+            with col_chat:
+                if chat_models:
+                    new_model = st.selectbox("Switch Chat Model", chat_models, 
+                                            index=chat_models.index(st.session_state.llm.model_name) if st.session_state.llm.model_name in chat_models else 0)
+                    if new_model != st.session_state.llm.model_name:
+                        if st.session_state.llm.set_model(new_model):
+                            st.success(f"Model switched to {new_model}")
+                            st.rerun()
+            with col_refresh1:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("🔄", key="ref_chat", help="Refresh Chat Models & Check Heartbeat"):
+                    if st.session_state.llm.is_available():
+                        st.session_state.llm.reset_status()
+                        st.toast("Ollama Active: Models Refreshed", icon="✅")
+                    else:
+                        st.toast("Ollama Offline!", icon="❌")
+                    st.rerun()
+                
+            # 3.3.2 Embedding Model with Refresh
+            embed_models = st.session_state.llm.get_embedding_models()
+            col_embed, col_refresh2 = st.columns([4, 1])
+            with col_embed:
+                if embed_models:
+                    new_embed = st.selectbox("Switch Embedding Model", embed_models,
+                                            index=embed_models.index(st.session_state.llm.embedding_model) if st.session_state.llm.embedding_model in embed_models else 0)
+                    if new_embed != st.session_state.llm.embedding_model:
+                        if st.session_state.llm.set_embedding_model(new_embed):
+                            # Auto-Scale Threshold based on NEW model dimensions
+                            new_dims = st.session_state.llm.get_embedding_dimension()
+                            if new_dims <= 384: st.session_state.neural_threshold = 0.25
+                            elif new_dims <= 768: st.session_state.neural_threshold = 0.35
+                            else: st.session_state.neural_threshold = 0.45
+                            st.session_state.kb.neural_threshold = st.session_state.neural_threshold
+                            
+                            st.warning("Embedding engine switched. You MUST re-index the Knowledge Base to synchronize vectors.")
+                            st.rerun()
+
+                else:
+                    st.error("No embedding models found. Please install nomic-embed-text or mxbai-embed-large.")
+            with col_refresh2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("🔄", key="ref_embed", help="Refresh Embedding Models & Check Heartbeat"):
+                   if st.session_state.llm.is_available():
+                        st.session_state.llm.get_embedding_dimension() # Force probe
+                        st.toast("Ollama Active: Embeddings Refreshed", icon="✅")
+                   else:
+                        st.toast("Ollama Offline!", icon="❌")
+                   st.rerun()
+        with colA2:
+            host = st.text_input("Ollama Host", st.session_state.config.get("ollama_host"))
+            if host != st.session_state.config.get("ollama_host"):
+                # Simple validation attempt
+                old_host = st.session_state.llm.base_url
+                st.session_state.llm.base_url = host
+                if st.session_state.llm.is_available():
+                    st.session_state.config.save({"ollama_host": host})
+                    st.success("Host updated and validated.")
+                else:
+                    st.session_state.llm.base_url = old_host
+                    st.error("Validation failed. Reverting to previous host.")
+        
+            
+        dims = st.session_state.llm.get_embedding_dimension()
+        label = f"{dims}-dimensional" if dims > 0 else "Neural"
+        st.info(f"🧠 Uses {label} dense vectors for contextual understanding.")
+        
+        # 3.3.3 Similarity Threshold Tuning
+        st.session_state.neural_threshold = st.slider("Neural Similarity Threshold", 0.05, 0.95, 
+                                                      st.session_state.neural_threshold, 
+                                                      help="Higher = stricter matches. Lower = broad contextual reach. Auto-scales when switching models.")
+        st.session_state.kb.neural_threshold = st.session_state.neural_threshold
+
+        
+
+
+        # --- NEW: NEURAL CACHE MANAGEMENT ---
+        st.markdown("---")
+        st.markdown("#### 🧠 Neural Cache Management")
+        st.markdown("<p style='font-size: 14px; color: #94a3b8;'>Isolated caches prevent 'Neural Dimension Mismatches' when switching models. Clear these if you encounter consistency errors.</p>", unsafe_allow_html=True)
+        
+        c_cache_info, c_cache_purge = st.columns([2, 1])
+        with c_cache_info:
+            import glob
+            cache_files = glob.glob("data/.cache_*.json")
+            cache_count = len(cache_files)
+            if cache_count > 0:
+                total_size_kb = sum(os.path.getsize(f) for f in cache_files) / 1024
+                st.write(f"📁 {cache_count} model-specific caches found ({total_size_kb:.1f} KB)")
+            else:
+                st.write("✨ Cache is currently clean.")
+        
+        with c_cache_purge:
+            if st.button("🧹 Purge Caches", use_container_width=True, help="Deletes ALL model-specific neural caches. This will force a full re-embedding on the next index build."):
+                import glob
+                for f in glob.glob("data/.cache_*.json"):
+                    os.remove(f)
+                # Also remove old legacy cache if exists
+                if os.path.exists("data/.neural_cache.json"):
+                    os.remove("data/.neural_cache.json")
+                st.toast("Neural Cache Purged", icon="🧹")
+                st.rerun()
+
+
+        # --- NEW: AGENT IDENTITY EDITOR ---
+        st.markdown("---")
+        st.markdown("#### 🧬 Agent Identity & Persona")
+        id_mgr = IdentityManager()
+        current_agent_md = id_mgr.load_config()
+        
+        # Identity sections in a form
+        with st.form("identity_editor"):
+            st.markdown("<p style='font-size: 12px; color: #94a3b8;'>Manage the core DNA of the Intelligence Engine via AGENT.md</p>", unsafe_allow_html=True)
+            new_identity_md = st.text_area("Agent Source (AGENT.md)", value=current_agent_md, height=300)
+            
+            if st.form_submit_button("Apply Identity Changes", width="stretch"):
+                if id_mgr.is_diff(new_identity_md):
+                    # Trigger confirmation (simulated since st.dialog is newer, using a nested state or simpler confirmation)
+                    st.session_state.pending_agent_md = new_identity_md
+                    st.session_state.confirm_id_save = True
+                else:
+                    st.toast("No changes detected.", icon="ℹ️")
+        
+        if getattr(st.session_state, 'confirm_id_save', False):
+            st.warning("⚠️ Are you sure you want to overwrite the engine's core instructions?")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Yes, Commit Changes"):
+                    id_mgr.save_config(st.session_state.pending_agent_md)
+                    st.success("AGENT.md updated. Reloading engine...")
+                    st.session_state.confirm_id_save = False
+                    st.rerun()
+            with c2:
+                if st.button("Cancel"):
+                    st.session_state.confirm_id_save = False
+                    st.rerun()
+
+        with st.expander("📚 View Prompt Engineering References", expanded=False):
+            ref_path = "docs/deep_learning.md"
+            if os.path.exists(ref_path):
+                with open(ref_path, "r", encoding="utf-8") as f:
+                    st.markdown(f.read())
+            else:
+                st.info("Reference notes will appear here after the first persona configuration.")
 
     # 3.4 Process Orchestration
     if "is_indexing" not in st.session_state: st.session_state.is_indexing = False
-
-    if not st.session_state.is_indexing:
-        if st.button("Initialize Engine & Build Index", width="stretch"):
-            st.session_state.is_indexing = True
-            st.session_state.kb.stop_requested = False
-            st.rerun()
-    else:
-        if st.button("🛑 Stop Indexing", width="stretch", type="primary"):
-            st.session_state.kb.stop_requested = True
-            st.session_state.is_indexing = False
-            st.rerun()
+    
+    if st.session_state.is_indexing:
+        # Use direct widget variables if available, fallback to state
+        current_uploaded = st.session_state.get("uploaded_files_input")
+        current_path = st.session_state.get("directory_path_input")
 
         # Execute Indexing Pipeline
+        limit_active = st.session_state.config.get("ingestion_size_limit_active")
+        limit_mb = st.session_state.config.get("ingestion_size_limit_mb")
+        
         files = []
-        if uploaded_files:
-            for f in uploaded_files: files.append({'obj': f, 'name': f.name, 'full_path': None})
-        if directory_path and os.path.isdir(directory_path):
-            for r, _, fs in os.walk(directory_path):
-                for f in fs:
-                    if f.endswith((".pdf", ".md", ".txt", ".csv", ".xlsx")):
-                        p = os.path.join(r, f)
-                        files.append({'obj': p, 'name': f, 'full_path': p})
+        skipped_files = []
+        unreachable_files = []
+        supported_ext = (".pdf", ".md", ".txt", ".csv", ".xlsx", ".docx", ".pptx")
+        scan_stats = {"folders": 0, "total_files": 0, "supported_files": 0}
+
+        def gather_files(base_path, target_list, skip_list, unreach_list):
+            base_path = base_path.strip().strip('"').strip("'")
+            if not os.path.exists(base_path): return
+            try:
+                for r, ds, fs in os.walk(base_path):
+                    scan_stats["folders"] += 1
+                    scan_stats["total_files"] += len(fs)
+                    for f in fs:
+                        full_p = os.path.join(r, f)
+                        if limit_active:
+                            try:
+                                f_size_mb = os.path.getsize(full_p) / (1024 * 1024)
+                                if f_size_mb > limit_mb:
+                                    skip_list.append(f"{f} (Large: {f_size_mb:.1f}MB)")
+                                    continue
+                            except Exception: pass
+                        if f.lower().endswith(supported_ext):
+                            try:
+                                with open(full_p, 'rb') as tmp: tmp.read(1)
+                                target_list.append({'obj': full_p, 'name': f, 'full_path': full_p})
+                                scan_stats["supported_files"] += 1
+                            except Exception as e:
+                                unreach_list.append(f"{f} (Hydration Error: {str(e)})")
+            except Exception as e:
+                st.error(f"Directory Scan Error: {str(e)}")
+
+        if current_uploaded:
+            for f in current_uploaded: 
+                if limit_active:
+                    f_size_mb = f.size / (1024 * 1024)
+                    if f_size_mb > limit_mb:
+                        skipped_files.append(f"{f.name} (Large: {f_size_mb:.1f}MB)")
+                        continue
+                files.append({'obj': f, 'name': f.name, 'full_path': None})
+        if current_path:
+            clean_path = current_path.strip().strip('"').strip("'")
+            if os.path.isdir(clean_path): gather_files(clean_path, files, skipped_files, unreachable_files)
+        
+        vault_path = "vault"
+        if os.path.exists(vault_path): gather_files(vault_path, files, skipped_files, unreachable_files)
 
         if files:
-            st.session_state.kb.__init__(engine_mode=engine_choice) # Hard Reset
-            st.session_state.kb.stop_requested = False # Ensure reset
-            prog = st.progress(0)
-            st_text = st.empty()
+            st.session_state.kb.documents_metadata = []
+            st.session_state.kb.file_contents = {}
+            st.session_state.kb.stop_requested = False 
+            st.session_state.kb.indexing_errors = [] 
+            
+            # Use placeholders at the top
+            prog = prog_placeholder.progress(0)
+            live_err_placeholder = st.empty() # Still keep this near the bottom for details
             
             for idx, item in enumerate(files):
                 if st.session_state.kb.stop_requested: break
-                st_text.markdown(f"<span style='color:#94a3b8; font-size: 13px;'>Ingesting: {item['name']}</span>", unsafe_allow_html=True)
-                process_single_file(item['obj'], st.session_state.kb, item['name'], item['full_path'])
+                try:
+                    process_single_file(item['obj'], st.session_state.kb, item['name'], item['full_path'])
+                except Exception as e:
+                    err_msg = f"{len(st.session_state.kb.indexing_errors) + 1}. {idx + 1}/{len(files)} {item['full_path'] or item['name']} - {str(e)}"
+                    st.session_state.kb.indexing_errors.append(err_msg)
+                
+                err_count = len(st.session_state.kb.indexing_errors)
+                status_color = "#ef4444" if err_count > 0 else "#2563eb"
+                prog_msg = f"Step 1/2: Ingesting {item['name']} ({idx+1}/{len(files)})"
+                if err_count > 0: prog_msg += f" | {err_count} Errors"
+                
+                status_placeholder.markdown(f"<p style='color:{status_color}; font-size: 14px; font-weight: 600;'>{prog_msg}</p>", unsafe_allow_html=True)
                 prog.progress((idx + 1) / len(files))
             
             if not st.session_state.kb.stop_requested:
-                st_text.markdown("<span style='color:#2563eb; font-size: 13px;'>Building Vector Core...</span>", unsafe_allow_html=True)
-                st.session_state.kb.build_index(st.session_state.llm if engine_choice == "Deep Learning" else None)
+                status_placeholder.markdown("<p style='color:#8b5cf6; font-size: 14px; font-weight: 600;'>Step 2/2: Building Semantic Galaxy (Vector Core Calculation)...</p>", unsafe_allow_html=True)
+                try:
+                    st.session_state.kb.build_index(st.session_state.llm if engine_choice == "Deep Learning" else None)
+                    st.session_state.kb.save_to_disk()
+                except Exception as e:
+                    st.error(f"Vector Core Build Failed: {str(e)}")
             
             st.session_state.is_indexing = False
-            if st.session_state.kb.stop_requested:
-                st.warning("Indexing stopped by user.")
             st.rerun()
+        else:
+            status_placeholder.warning("No files found to index.")
+            st.session_state.is_indexing = False
+
+    # Persistent Error Report
+    if hasattr(st.session_state.kb, 'indexing_errors') and st.session_state.kb.indexing_errors:
+
+        st.markdown("---")
+        st.markdown(f"### ⚠️ Ingestion Report: {len(st.session_state.kb.indexing_errors)} Errors")
+        full_report = "[\n" + ",\n".join(st.session_state.kb.indexing_errors) + "\n]"
+        st.code(full_report, language="text")
+        
+        # Action Buttons
+        c_clear, c_copy, c_exp, c_ask = st.columns(4)
+        with c_clear:
+            if not st.session_state.confirm_clear_err:
+                if st.button("✨ Clear", use_container_width=True, key="clear_err"):
+                    st.session_state.confirm_clear_err = True
+                    st.rerun()
+            else:
+                if st.button("⚠️ Confirm?", use_container_width=True, key="confirm_clear_err_btn", type="primary"):
+                    st.session_state.kb.indexing_errors = []
+                    st.session_state.confirm_clear_err = False
+                    st.rerun()
+                if st.button("Cancel", use_container_width=True, key="cancel_clear_err"):
+                    st.session_state.confirm_clear_err = False
+                    st.rerun()
+
+        with c_copy:
+            if st.button("📋 Copy Log", use_container_width=True, key="copy_err"):
+                st.info("Manual copy supported in the code block above.")
+        with c_exp:
+            log_pattern = st.session_state.config.get("log_pattern")
+            log_filename = datetime.now().strftime(log_pattern) if "%" in log_pattern else log_pattern
+            if not log_filename.endswith(".log"): log_filename += ".log"
+            st.download_button("📤 Export", data=full_report, file_name=log_filename, mime="text/plain", use_container_width=True)
+        with c_ask:
+            model_nick = st.session_state.llm.model_nickname
+            if st.button(f"🤖 Ask {model_nick}", use_container_width=True, key="ask_err"):
+                recent_errors = st.session_state.kb.indexing_errors[-3:]
+                diagnose_query = f"I encountered these errors during indexing. Analyze and suggest fixes:\n\n" + "\n".join(recent_errors)
+                st.session_state.messages.append({"role": "user", "content": diagnose_query})
+                st.session_state.is_searching = True
+                st.session_state.pending_query = diagnose_query
+                st.rerun()
+        st.markdown("---")
+
 
 with tab_analytics:
     st.markdown("### 📊 Vector Analytics")
@@ -346,34 +853,52 @@ with tab_analytics:
         else:
             st.warning("Insufficient spatial data to render map.")
 
-        st.markdown("<p class='meta-label' style='margin-top: 30px;'>Statistical Importance (Global)</p>", unsafe_allow_html=True)
-        keywords_df = st.session_state.kb.get_top_keywords_df()
-        if not keywords_df.empty:
-            st.bar_chart(keywords_df.set_index('Keyword'), color="#2563eb", height=200)
+        if engine_choice == "Machine Learning":
+            st.markdown("<p class='meta-label' style='margin-top: 30px;'>Statistical Importance (Global)</p>", unsafe_allow_html=True)
+            keywords_df = st.session_state.kb.get_top_keywords_df()
+            if not keywords_df.empty:
+                st.bar_chart(keywords_df.set_index('Keyword'), color="#2563eb", height=200)
+
         
         st.markdown("<p class='meta-label' style='margin-top: 30px;'>NLP Pipeline Report</p>", unsafe_allow_html=True)
         st.dataframe(pd.DataFrame(st.session_state.kb.cleaning_report), width="stretch", height=200, hide_index=True)
 
 # --- PHASE 5: RESEARCH HUB ---
-with tab_research:
-    if not st.session_state.kb.file_contents:
-        st.markdown("<div style='height: 10vh;'></div>", unsafe_allow_html=True)
-        st.markdown("<div style='text-align: center;'><div style='font-size: 60px;'>💠</div><h1>Nexus Hub</h1><p>Ingest knowledge to begin your semantic research.</p></div>", unsafe_allow_html=True)
-    else:
-        # 5.1 Chat Display
-        chat_box = st.container(height=650, border=False)
-        with chat_box:
-            for msg in st.session_state.messages:
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"], unsafe_allow_html=True)
-                    # Inline Results for Retrieval-only search
-                    if msg.get("type") == "results":
-                        for fname, chunks in msg["data"].items():
-                            with st.container(border=True):
-                                avg_score = sum(r['score'] for r in chunks) / len(chunks)
-                                st.markdown(f"<div style='display:flex;justify-content:space-between;'><span class='meta-label'>{fname}</span><span class='match-tag'>{int(avg_score*100)}% Match</span></div>", unsafe_allow_html=True)
-                                with st.expander("View Segments", expanded=False):
-                                    for r in chunks: st.markdown(f"<p style='font-size:0.85rem;'>({r['page']}) {r['text']}</p>", unsafe_allow_html=True)
+
+# --- FRAGMENTED CHAT HUB (Zero-Flicker Orchestration) ---
+@st.fragment
+def render_chat_hub(engine_choice, ollama_ok):
+    # 5.1 Chat Display
+    chat_box = st.container(height=650, border=False)
+    
+    # Guidance Mode Logic
+    is_empty_kb = not st.session_state.kb.file_contents
+    
+    with chat_box:
+        if is_empty_kb and not st.session_state.messages:
+            st.markdown(f"""
+                <div style='text-align: center; margin-top: 50px;'>
+                    <div style='font-size: 60px;'>💠</div>
+                    <h1>{st.session_state.llm.model_nickname} is Ready</h1>
+                    <p style='color: #94a3b8;'>The intelligence engine is active, but your Knowledge Base is currently empty.</p>
+                    <p style='color: #94a3b8; font-size: 14px;'>Ask me how to get started or initialize your data in the <b>System Settings</b> tab.</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"], unsafe_allow_html=True)
+                # Inline Results for Retrieval-only search
+                if msg.get("type") == "results":
+                    for fname, chunks in msg["data"].items():
+                        with st.container(border=True):
+                            avg_score = sum(r['score'] for r in chunks) / len(chunks)
+                            st.markdown(f"<div style='display:flex;justify-content:space-between;'><span class='meta-label'>{fname}</span><span class='match-tag'>{int(avg_score*100)}% Match</span></div>", unsafe_allow_html=True)
+                            with st.expander("View Segments", expanded=False):
+                                for c in chunks:
+                                    st.markdown(f"**Score: {c['score']:.2f} (Page {c.get('page','?')})**")
+                                    st.write(c['text'])
+                                    st.markdown("---")
 
         # 5.2 Input Command Handler
         if st.session_state.is_searching and st.session_state.pending_query:
@@ -393,11 +918,27 @@ with tab_research:
             with st.status("💠 Processing Semantic Hub...", expanded=True) as status:
                 if engine_choice == "Deep Learning" and ollama_ok:
                     # NEURAL RAG FLOW
-                    ctx = st.session_state.kb.get_context_for_query(query, st.session_state.llm)
-                    if ctx:
+                    try:
+                        ctx = st.session_state.kb.get_context_for_query(query, st.session_state.llm) if not is_empty_kb else None
+                    except ValueError as ve:
+                        st.error(str(ve))
+                        st.session_state.messages.append({"role": "assistant", "content": f"⚠️ **Search Blocked**: {str(ve)}"})
+                        st.session_state.is_searching = False
+                        st.rerun()
+                    
+                    # Guidance System Injection
+                    if is_empty_kb:
+                        ctx = "SYSTEM_GUIDANCE_MODE: The user's knowledge base is empty. Instead of searching, guide the user on how to use the 'System Settings' tab to upload files (PDF, CSV, etc.) and build an index. Be encouraging."
+
+                    if ctx or is_empty_kb:
                         with chat_box:
                             with st.chat_message("assistant"):
-                                stream = st.session_state.llm.generate_rag_response(query, ctx, st.session_state.messages)
+                                agent_id_mgr = IdentityManager()
+                                agent_context = agent_id_mgr.load_config()
+                                manifest = st.session_state.kb.get_file_manifest() if hasattr(st.session_state.kb, 'get_file_manifest') else sorted(list(st.session_state.kb.file_contents.keys()))
+                                stream = st.session_state.llm.generate_rag_response(query, ctx, st.session_state.messages, 
+                                                                                  agent_context=agent_context, 
+                                                                                  file_manifest=manifest)
                                 full_res = st.write_stream(stream)
                         stats = st.session_state.llm.get_last_stats()
                         st.session_state.messages.append({"role": "assistant", "content": full_res, "type": "rag", "stats": stats})
@@ -419,11 +960,15 @@ with tab_research:
                 status.update(label="Query Complete", state="complete")
             st.session_state.is_searching = False
             st.session_state.pending_query = None
-            st.rerun()
+            st.rerun() # Local fragment rerun to update history
         else:
             # 5.3 Chat Input Box
             if prompt := st.chat_input("Enter your research query (or type /help)..."):
                 st.session_state.messages.append({"role": "user", "content": prompt})
                 st.session_state.is_searching = True
                 st.session_state.pending_query = prompt
-                st.rerun()
+                st.rerun() # Local fragment rerun to trigger search block above
+
+with tab_research:
+    render_chat_hub(engine_choice, ollama_ok)
+

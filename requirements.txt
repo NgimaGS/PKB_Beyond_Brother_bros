@@ -11,3 +11,5 @@ umap-learn
 plotly
 scipy
 langchain-ollama
+python-docx
+python-pptx

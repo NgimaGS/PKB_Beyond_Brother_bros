@@ -36,6 +36,7 @@ class OllamaService:
         """
         self.model_name = model_name
         self.embedding_model = embedding_model
+        self.model_nickname = model_name # Default to model name
         self._available = None  # Cached status to prevent redundant network calls
         
         # Token Analytics State
@@ -51,7 +52,7 @@ class OllamaService:
 
     def embed_text(self, text: str) -> list[float]:
         """
-        Generates a 1024-dimensional neural embedding for a single text chunk.
+        Generates a neural embedding for a single text chunk.
         Used for real-time query vectorization.
         """
         try:
@@ -61,18 +62,35 @@ class OllamaService:
             print(f"Embedding error: {e}")
             return []
 
+    def get_embedding_dimension(self) -> int:
+        """Probes the current model to determine its vector dimension."""
+        try:
+            # We use a very short string for the probe to minimize latency
+            vec = self.embed_text("probe")
+            return len(vec) if vec else 0
+        except Exception:
+            return 0
+
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """
-        Generates neural embeddings for a list of texts using native batching.
-        Significantly faster than individual calls during initial document indexing.
+        Generates neural embeddings for a list of texts using sub-batching.
+        Processes chunks of 20 at a time to prevent Ollama timeouts on larger models.
         """
+        all_embeddings = []
+        batch_size = 20
+        
         try:
-            # Use the newer .embed() API for optimized batch processing
-            response = ollama.embed(model=self.embedding_model, input=texts)
-            return response.get("embeddings", [])
+            for i in range(0, len(texts), batch_size):
+                chunk = texts[i : i + batch_size]
+                # Use the newer .embed() API for optimized processing
+                response = ollama.embed(model=self.embedding_model, input=chunk)
+                batch_vecs = response.get("embeddings", [])
+                all_embeddings.extend(batch_vecs)
+            return all_embeddings
         except Exception as e:
             print(f"Batch embedding error: {e}")
             return []
+
 
     # ------------------------------------------------------------------
     # 2. SYSTEM HEALTH (Connectivity)
@@ -100,6 +118,46 @@ class OllamaService:
             self._available = False
             return False
 
+    def get_available_models(self) -> list[str]:
+        """Returns a list of all model names installed on the local Ollama instance."""
+        try:
+            models = ollama.list()
+            return [m.model for m in models.models]
+        except Exception:
+            return []
+
+    def get_chat_models(self) -> list[str]:
+        """Returns a list of models likely to be conversational/chat-based."""
+        all_models = self.get_available_models()
+        # Heuristic: exclude known embedding patterns
+        embed_patterns = ['embed', 'minilm', 'nomic', 'bge', 'bert']
+        return [m for m in all_models if not any(p in m.lower() for p in embed_patterns)]
+
+    def get_embedding_models(self) -> list[str]:
+        """Returns a list of models specifically designed for vector embeddings."""
+        all_models = self.get_available_models()
+        # Heuristic: include known embedding patterns
+        embed_patterns = ['embed', 'minilm', 'nomic', 'bge', 'bert']
+        return [m for m in all_models if any(p in m.lower() for p in embed_patterns)]
+
+    def set_model(self, model_name: str) -> bool:
+        """Updates the active LLM after verifying its existence."""
+        available = self.get_available_models()
+        if any(model_name in name for name in available):
+            self.model_name = model_name
+            self.reset_status()
+            return True
+        return False
+
+    def set_embedding_model(self, model_name: str) -> bool:
+        """Updates the active embedding engine."""
+        available = self.get_available_models()
+        if any(model_name in name for name in available):
+            self.embedding_model = model_name
+            self.reset_status()
+            return True
+        return False
+
     def reset_status(self):
         """Forces a fresh heart-beat check on the next availability request."""
         self._available = None
@@ -109,22 +167,38 @@ class OllamaService:
     # ------------------------------------------------------------------
 
     def _build_rag_messages(self, query: str, context_text: str,
-                             chat_history: list[dict] | None = None) -> list[dict]:
+                             chat_history: list[dict] | None = None,
+                             agent_context: str | None = None,
+                             file_manifest: list[str] | None = None) -> list[dict]:
         """
         Constructs a prompt that grounds the LLM in the provided document context.
         Implements a strict 'System' role to prevent hallucinations.
         """
-        system_prompt = (
-            "You are a knowledgeable research assistant. Your job is to answer "
-            "the user's question using ONLY the provided document context below.\n\n"
+        system_prompt = ""
+        if agent_context:
+            system_prompt += f"{agent_context}\n\n"
+        else:
+            system_prompt += "You are a knowledgeable research assistant. "
+
+        if file_manifest:
+            manifest_str = ", ".join(file_manifest)
+            system_prompt += f"You have access to a Knowledge Base containing the following files: [{manifest_str}].\n\n"
+            
+        system_prompt += (
+            "Your job is to answer the user's question using the provided document context below.\n"
+            "Each document snippet is labeled with a 'Source' filename and a 'Full Path'.\n"
+            "If the user asks for the location or full path of a file, ALWAYS provide the 'Full Path' correctly from the context snippets.\n"
+            "If the answer isn't in the provided snippets, look at the file manifest above. If a relevant file exists but its content is missing from the snippets, tell the user you know the file exists but it didn't return a strong match for this query.\n\n"
             "--- DOCUMENT CONTEXT ---\n"
             f"{context_text}\n"
             "--- END CONTEXT ---\n\n"
             "Constraints:\n"
-            "- If the answer isn't in the context, say 'I don't have enough information'.\n"
+            "- If the answer isn't in the context and you can't infer it from the manifest, say 'I don't have enough information'.\n"
             "- Cite specific filenames and page numbers if available.\n"
+            "- Provide absolute paths ONLY if specifically asked for the file location or path.\n"
             "- Keep technical explanations precise."
         )
+
 
         messages = [{"role": "system", "content": system_prompt}]
 
@@ -141,19 +215,25 @@ class OllamaService:
         return messages
 
     def generate_rag_response(self, query: str, context_text: str,
-                               chat_history: list[dict] | None = None):
+                                chat_history: list[dict] | None = None,
+                                agent_context: str | None = None,
+                                file_manifest: list[str] | None = None):
         """
         Streams a RAG-grounded response from Ollama.
         Yields text chunks and captures token usage stats upon completion.
         """
-        messages = self._build_rag_messages(query, context_text, chat_history)
+        messages = self._build_rag_messages(query, context_text, chat_history, agent_context, file_manifest)
 
         try:
             stream = ollama.chat(
                 model=self.model_name,
                 messages=messages,
                 stream=True,
-                options={"temperature": 0.3}
+                options={
+                    "temperature": 0.3,
+                    "repeat_penalty": 1.2,
+                    "repeat_last_n": 64
+                }
             )
 
             current_response = ""

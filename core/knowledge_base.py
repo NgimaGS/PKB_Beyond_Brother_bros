@@ -38,6 +38,7 @@ import unicodedata
 import json
 import os
 import hashlib
+import pickle
 
 # --- NLTK Resource Management ---
 # WordNet is used for Lemmatization (finding the root of a word).
@@ -49,7 +50,7 @@ class KnowledgeBase:
     Orchestrates the lifecycle of knowledge from raw file to searchable vector.
     """
 
-    def __init__(self, chunk_size=600, overlap_size=100, engine_mode="Machine Learning"):
+    def __init__(self, chunk_size=600, overlap_size=100, engine_mode="Deep Learning"):
         """
         Initializes the semantic core with configurable windowing parameters.
         
@@ -76,6 +77,8 @@ class KnowledgeBase:
         # Analytics & UI Reporting
         self.cleaning_report = []
         self.file_chunk_counts = {}
+        self.indexing_errors = [] # List of strings formatted for the UI report
+        self.index_embedding_model = None # Tracks which model built the current vector index
         
         # ML Engine State (Classical Statistics)
         self.vectorizer = TfidfVectorizer(stop_words='english')
@@ -84,8 +87,11 @@ class KnowledgeBase:
 
         # DL Engine State (Neural Embeddings)
         self.embeddings = None       # Dense NumPy array
-        self.cache_file = "data/.neural_cache.json"
-        self._embed_cache = self._load_disk_cache()
+        self._embed_cache = {}       # Loaded dynamically in build_index
+        self._active_cache_path = None
+        self.neural_threshold = 0.35 # Default, can be tuned via app.py
+
+
 
     # ------------------------------------------------------------------
     # PHASE 1: DISCOVERY & CACHING
@@ -95,21 +101,42 @@ class KnowledgeBase:
         """Generates a fingerprint for a text chunk to prevent redundant embedding calls."""
         return hashlib.md5(text.encode('utf-8')).hexdigest()
 
-    def _load_disk_cache(self):
-        """Loads cached neural vectors from previous sessions."""
-        if os.path.exists(self.cache_file):
+    def _get_cache_path(self, model_name):
+        """Generates a safe filename for the model-specific neural cache."""
+        safe_name = re.sub(r'[^a-zA-Z0-9]', '_', model_name)
+        return os.path.join("data", f".cache_{safe_name}.json")
+
+
+    def _load_disk_cache(self, model_name):
+        """Loads cached neural vectors for the specific model being used."""
+        path = self._get_cache_path(model_name)
+        self._active_cache_path = path
+        if os.path.exists(path):
             try:
-                with open(self.cache_file, 'r') as f:
+                with open(path, 'r') as f:
                     return json.load(f)
             except Exception: pass
         return {}
 
     def _save_disk_cache(self):
-        """Persists the embedding cache to disk."""
+        """Persists the current model-specific cache to disk."""
+        if not self._active_cache_path: return
         try:
-            with open(self.cache_file, 'w') as f:
+            with open(self._active_cache_path, 'w') as f:
                 json.dump(self._embed_cache, f)
         except Exception: pass
+
+
+    def clear_previous_index(self):
+        """Purges old TF-IDF and Neural indices to free memory during a new build."""
+        self.vectorizer = TfidfVectorizer(stop_words='english')
+        self.tfidf_matrix = None
+        self.embeddings = None
+        self.documents_spatial = []
+        # We preserve file_contents if we are doing a progressive update,
+        # but for a clean rebuild from app.py, it will be reset.
+        self.file_contents = {}
+        self.documents_metadata = []
 
     # ------------------------------------------------------------------
     # PHASE 2: THE PREPROCESSING PIPELINE
@@ -221,14 +248,32 @@ class KnowledgeBase:
         Automatically triggers 3D spatial generation for the UI.
         """
         if not self.documents_metadata: return
+        
+        # Track the model used for this build
+        if self.engine_mode == "Deep Learning" and llm_service:
+            model_name = llm_service.embedding_model
+            self.index_embedding_model = model_name
+            # Load model-specific vector cache to prevent dimension pollution
+            self._embed_cache = self._load_disk_cache(model_name)
+            
+            # Determine and lock the mathematical dimension of the current model
+            vec = llm_service.embed_text("dim_probe")
+            self.index_embedding_dimension = len(vec) if vec is not None else 0
+
+
+        else:
+            self.index_embedding_model = "Classical ML (TF-IDF)"
+            self.index_embedding_dimension = self.vectorizer.max_features if hasattr(self.vectorizer, 'max_features') else 0
+
         texts = [doc['text'] for doc in self.documents_metadata]
 
-        if self.engine_mode == "Machine Learning":
-            # Classical fit: Calculates word weights across the whole collection
-            self.tfidf_matrix = self.vectorizer.fit_transform(texts).toarray()
-        else:
+        # Hybrid Labeling Layer: Always build TF-IDF for semantic topic modeling
+        self.tfidf_matrix = self.vectorizer.fit_transform(texts).toarray()
+
+        if self.engine_mode == "Deep Learning":
             if not llm_service: return
             self._build_neural_embeddings(texts, llm_service)
+
         
         # Trigger 3D Spatial Processing
         self._generate_3d_spatial_data()
@@ -270,11 +315,13 @@ class KnowledgeBase:
             matrix, source_meta = self._get_aggregated_document_matrix()
             self.documents_matrix_agg = matrix # Cache for localized drill-downs
         
-        if matrix is None or len(matrix) < 2: return
+        if matrix is None or len(matrix) < 1: return
 
-        # 1. Dimensionality Reduction (UMAP 3D)
-        if len(matrix) >= 2:
-            n_neighbors = min(15, len(matrix) - 1)
+        # 1. Dimensionality Reduction (UMAP 3D / Fallback)
+        if len(matrix) >= 3:
+            # UMAP requires n_neighbors > 1.
+            # With len(matrix) >= 3, min(..., len-1) will be >= 2.
+            n_neighbors = max(2, min(15, len(matrix) - 1))
             reducer = umap.UMAP(n_components=3, n_neighbors=n_neighbors, min_dist=0.1, random_state=42, n_jobs=1)
             coords = reducer.fit_transform(matrix)
 
@@ -283,9 +330,13 @@ class KnowledgeBase:
             kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
             clusters = kmeans.fit_predict(matrix)
         else:
-            # Fallback for single document/segment to prevent blank maps
-            coords = np.array([[0.0, 0.0, 0.0]])
-            clusters = np.array([0])
+            # Fallback for single document/segment or pairs to prevent UMAP crashes
+            if len(matrix) == 1:
+                coords = np.array([[0.0, 0.0, 0.0]])
+                clusters = np.array([0])
+            else: # len(matrix) == 2
+                coords = np.array([[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+                clusters = np.array([0, 1])
 
         # 3. Metadata Injection
         if self.spatial_granularity == "Documents": 
@@ -401,7 +452,11 @@ class KnowledgeBase:
             return [f"Galaxy {cluster_id}"]
 
         # Sum TF-IDF scores across the cluster to find top features
-        cluster_tfidf = self.tfidf_matrix[indices].sum(axis=0)
+        valid_indices = [idx for idx in indices if idx < self.tfidf_matrix.shape[0]]
+        if not valid_indices:
+            return [f"Galaxy {cluster_id} (Syncing)"]
+            
+        cluster_tfidf = self.tfidf_matrix[valid_indices].sum(axis=0)
         feature_names = self.vectorizer.get_feature_names_out()
         
         # Sort by weight
@@ -484,6 +539,11 @@ class KnowledgeBase:
         q_vec = np.array(llm.embed_text(query))
         if q_vec.size == 0: return []
         
+        # Dimension Guardrail: Prevent linear algebra crashes if models switched
+        if q_vec.shape[0] != self.embeddings.shape[1]:
+            raise ValueError(f"Neural Dimension Mismatch: Index is {self.embeddings.shape[1]} (from {self.index_embedding_model}), but Query is {q_vec.shape[0]} (from {llm.embedding_model}). Please re-index.")
+
+        
         # Parallel Cosine Similarity using NumPy
         q_norm = np.linalg.norm(q_vec)
         d_norms = np.linalg.norm(self.embeddings, axis=1)
@@ -491,8 +551,9 @@ class KnowledgeBase:
 
         results = []
         for i, score in enumerate(sims):
-            if score > 0.35: # Slightly higher threshold for neural
+            if score > self.neural_threshold: 
                 meta = self.documents_metadata[i].copy()
+
                 meta['score'] = round(float(score), 4)
                 results.append(meta)
         return sorted(results, key=lambda x: x['score'], reverse=True)[:top_n]
@@ -500,11 +561,92 @@ class KnowledgeBase:
     def get_context_for_query(self, query_text, llm, top_n=5):
         """Formats the top N results as a structured text block for the LLM."""
         res = self.search(query_text, llm, top_n=top_n)
-        return "\n".join([f"[Source: {r['file']} P{r['page']}]\n{r['text']}\n" for r in res])
+        return "\n".join([f"[Source: {r['file']} P{r['page']} | Full Path: {r.get('full_path', 'N/A')}]\n{r['text']}\n" for r in res])
+
 
     def get_document_text(self, filename):
         """Retrieves raw content for summarization."""
         return self.file_contents.get(filename, "")
+
+    def get_file_manifest(self):
+        """Returns a list of all unique filenames currently in the Knowledge Base."""
+        return sorted(list(self.file_contents.keys()))
+
+    # ------------------------------------------------------------------
+    # PHASE 6: PERSISTENCE (Save/Load)
+    # ------------------------------------------------------------------
+
+    def save_to_disk(self, save_dir="data/index"):
+        """Serializes the current knowledge state to disk."""
+        if not self.documents_metadata: return False
+        
+        os.makedirs(save_dir, exist_ok=True)
+        try:
+            # 1. Save Text & Metadata (JSON)
+            payload = {
+                "metadata": self.documents_metadata,
+                "file_contents": self.file_contents,
+                "spatial": self.documents_spatial,
+                "engine_mode": self.engine_mode,
+                "index_model": getattr(self, "index_embedding_model", None),
+                "index_dim": getattr(self, "index_embedding_dimension", 0),
+                "granularity": self.spatial_granularity
+            }
+            with open(os.path.join(save_dir, "metadata.json"), "w") as f:
+                json.dump(payload, f)
+
+            # 2. Save Matrices (Numpy)
+            if self.tfidf_matrix is not None:
+                np.save(os.path.join(save_dir, "tfidf_matrix.npy"), self.tfidf_matrix)
+            if self.embeddings is not None:
+                np.save(os.path.join(save_dir, "embeddings.npy"), self.embeddings)
+
+            # 3. Save Vectorizer (Pickle - required for ML search)
+            with open(os.path.join(save_dir, "vectorizer.pkl"), "wb") as f:
+                pickle.dump(self.vectorizer, f)
+
+            return True
+        except Exception as e:
+            print(f"Save error: {e}")
+            return False
+
+    def load_from_disk(self, load_dir="data/index"):
+        """Restores the knowledge state from disk."""
+        if not os.path.exists(load_dir): return False
+        
+        try:
+            # 1. Load Text & Metadata
+            meta_path = os.path.join(load_dir, "metadata.json")
+            if os.path.exists(meta_path):
+                with open(meta_path, "r") as f:
+                    payload = json.load(f)
+                    self.documents_metadata = payload.get("metadata", [])
+                    self.file_contents = payload.get("file_contents", {})
+                    self.documents_spatial = payload.get("spatial", [])
+                    self.engine_mode = payload.get("engine_mode", "Deep Learning")
+                    self.index_embedding_model = payload.get("index_model")
+                    self.index_embedding_dimension = payload.get("index_dim", 0)
+                    self.spatial_granularity = payload.get("granularity", "Segments")
+
+            # 2. Load Matrices
+            tfidf_path = os.path.join(load_dir, "tfidf_matrix.npy")
+            if os.path.exists(tfidf_path):
+                self.tfidf_matrix = np.load(tfidf_path)
+            
+            embed_path = os.path.join(load_dir, "embeddings.npy")
+            if os.path.exists(embed_path):
+                self.embeddings = np.load(embed_path)
+
+            # 3. Load Vectorizer
+            vec_path = os.path.join(load_dir, "vectorizer.pkl")
+            if os.path.exists(vec_path):
+                with open(vec_path, "rb") as f:
+                    self.vectorizer = pickle.load(f)
+
+            return True
+        except Exception as e:
+            print(f"Load error: {e}")
+            return False
 
     def get_top_keywords_df(self, top_n=10):
         """Analytics: Identifies the most statistically important terms in the index."""

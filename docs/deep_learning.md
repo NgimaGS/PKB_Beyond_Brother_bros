@@ -1,30 +1,33 @@
-# Deep Learning (Neural Retrieval & RAG) Implementation
-===================================================
+# Deep Learning & Prompt Engineering References
 
-The Deep Learning engine in this solution is built on **Dense Neural Embeddings** and **Retrieval-Augmented Generation (RAG)**—modern techniques that go beyond keywords to understand semantic intent.
+This document serves as a repository of research and best practices utilized in the development of the NLP Engine's identity and interaction logic.
 
-## 🛠️ The Pipeline Structure
+## 1. Structured Agent Descriptors (AGENT.md)
+The concept of using a dedicated `AGENT.md` file in the root of a repository is an emerging standard for providing long-term memory and operational boundaries to AI agents.
 
-The DL retrieval process follows a sophisticated 5-stage pipeline defined in `core/knowledge_base.py` and `core/llm_service.py`:
+### Key Resources:
+- **The "Onboarding Manual" Pattern**: Treating the system prompt as an employee's starting guide rather than a list of constraints. [Ref: Builder.io]
+- **Hierarchical Context**: How agents prioritize instructions located closer to the target file or subdirectory.
 
-1.  **Sliding Window Chunking**: Unlike ML's sentence-splits, DL uses overlapping windows of 600 characters. This ensures that even if a concept is cut off, the "context overlap" (100 chars) preserves the surrounding meaning.
-2.  **Neural Vectorization (Ollama)**: We use the `mxbai-embed-large` model to transform text chunks into **1024-dimensional dense vectors**. These vectors map concepts into a high-dimensional space where "automobile" and "car" are mathematically close.
-3.  **Neural Caching (MD5 Fingerprinting)**: Since generating embeddings is computationally expensive, we hash every text chunk and store its vector in `data/.neural_cache.json`. This provides instant loading for previously indexed documents.
-4.  **Semantic Search (NumPy)**: We perform **Multi-dimensional Cosine Similarity** to find the closest vectors to the user's query.
-5.  **Retrieval-Augmented Generation (RAG)**: The top $N$ segments are injected into a strict system prompt for `Llama 3.1`. This forces the LLM to answer *only* from your documents, virtually eliminating hallucinations.
+## 2. Prompt Engineering Best Practices
+To ensure the LLM remains performant and "grounded," the following techniques are applied:
 
-## 📓 Learnings & Techniques
+### Few-Shot Rooting
+Instead of abstract instructions like "be polite," the engine uses concrete examples of "Thought -> Action -> Response" loops to align with the project's technical goals.
 
-### Why Neural Embeddings?
-- **Semantic Understanding**: Finds the right answer even if the keywords don't match exactly.
-- **Robustness to Noise**: Better at handling typos or informal language in documents.
-- **Multilingual Potential**: Neural models are often natively cross-lingual.
+### System-Level Constraints vs. RAG Knowledge
+- **Static Identity**: Hard-wired into the `system` prompt via the `AGENT.md` logic.
+- **Dynamic Knowledge**: Retrieved at runtime from the `vault/` directory via semantic search.
 
-### Techniques for Accuracy
-- **RAG System Prompting**: We use a "Double-Grounded" system role that requires the model to say "I don't know" if the answer isn't in the context.
-- **Batch Embedding**: Implemented via `ollama.embed()`, allowing the system to process 100 chunks in a single GPU/CPU call, reducing indexing time by ~70%.
+### The "Knowledge Chain" Mechanism
+To maintain performance and privacy, the system implements a tiered data flow:
+1.  **Ingestion Barrier**: Files are read once, vectorized, and stored in a persistent local index. The LLM does not have direct disk access.
+2.  **Retrieval Step**: Only the most relevant text segments are retrieved based on the user's query intent.
+3.  **Prompt Rooting**: Retrieved segments are injected into the prompt context, "rooting" the LLM's response in ground-truth data.
 
-### Performance Constraints
-- **Latency**: Generation takes time (streaming helps UI responsiveness).
-- **Cold Starts**: Requires a running Ollama server.
-- **Model Size**: Deep learning requires significantly more RAM/VRAM than statistical ML.
+## 3. Recommended Reading
+- *Pre-train, Prompt, and Predict*: A modern overview of how persona-based prompting changes model behavior.
+- *Chain of Thought Prompting Elicits Reasoning in Large Language Models*: The foundational paper on why "Let's think step by step" works.
+
+---
+*Created dynamically by the NLP Engine // 2026-04-10*

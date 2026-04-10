@@ -103,11 +103,41 @@ def inject_custom_css():
         .badge-ml { background: rgba(59, 130, 246, 0.1); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2); }
         .badge-dl { background: rgba(139, 92, 246, 0.1); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.2); }
 
-        /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #0e1117; }
         ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+        /* File Sidebar UI Refinement */
+        .parallax-wrapper {
+            width: 100%;
+            overflow: hidden;
+            position: relative;
+            background: #1f2937;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            border: 1px solid #374151;
+            cursor: help;
+        }
+        
+        .parallax-text {
+            white-space: nowrap;
+            display: inline-block;
+            font-size: 12px;
+            color: #cbd5e1;
+            transition: color 0.2s;
+        }
+
+        .parallax-wrapper:hover .parallax-text {
+            color: #3b82f6;
+            animation: scroll-text 8s linear infinite;
+        }
+
+        @keyframes scroll-text {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
         </style>
         """, unsafe_allow_html=True)
 
