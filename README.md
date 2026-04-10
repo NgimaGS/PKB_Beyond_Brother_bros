@@ -11,11 +11,13 @@ A professional-grade **Hybrid NLP Hub** designed for researcher-level knowledge 
 
 Explore the technical foundations and architectural philosophy of the Nexus Engine:
 
-*   **[🏗️ Architecture & Design](./docs/architecture_design.md)**: A deep dive into the "Hybrid Hub" philosophy and modular separation of concerns.
+*   **[🚀 Getting Started (Onboarding)](./docs/ONBOARDING.md)**: Your first stop. How to set up Python, Ollama, and the Local AI stack.
+*   **[🏗️ Architecture & Design](./docs/architecture_design.md)**: Deep dive into the "Hybrid Hub" philosophy and the **Query Lifecycle** (how data flows).
 *   **[📊 Machine Learning Guide](./docs/machine_learning.md)**: Technical breakdown of TF-IDF, Lemmatization, and Statistical Retrieval.
 *   **[🧠 Deep Learning Guide](./docs/deep_learning.md)**: Explaining Neural Embeddings, RAG, and Ollama integration.
-*   **[🤝 Contributor Etiquette](./docs/etiquette.md)**: Essential guidelines for coding standards, documentation, and methodology.
+*   **[🤝 Contributor Etiquette](./docs/etiquette.md)**: Essential guidelines for coding standards and "Pedagogy-First" documentation.
 *   **[📝 Project Roadmap](./TODO.md)**: Current status and upcoming feature priorities.
+
 
 ---
 

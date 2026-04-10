@@ -1,3 +1,14 @@
+"""
+Identity Manager — Agent Persona Orchestration
+==============================================
+
+Architecture Rationale:
+-----------------------
+This module manages the 'Who' of the AI Assistant. It loads character
+definitions from `AGENT.md`, allowing for a fully customized research 
+companion without ever touching the core RAG logic.
+"""
+
 import os
 
 class IdentityManager:

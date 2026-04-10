@@ -1,3 +1,24 @@
+"""
+File Processor — Multi-Format Ingestion Logic
+=============================================
+
+Architecture Rationale:
+-----------------------
+This module acts as the 'Gateway' for data entering the system. It handles the 
+messy reality of file parsing so the KnowledgeBase can focus on pure text math.
+
+Design Pattern: Strategy
+The `process_single_file` function uses a file-extension matching strategy 
+to route different data formats (PDF, CSV, Office Docs) to their respective
+specialized libraries.
+
+Key Techniques:
+1. **Encoding Resilience**: Implements fallbacks (UTF-8 -> Latin1 -> CP1252) 
+   to handle common Windows/Excel encoding issues.
+2. **Page-Awareness**: Preserves page numbers during PDF/PPTX extraction 
+   to allow for accurate citations in the RAG chat.
+"""
+
 import pandas as pd
 from PyPDF2 import PdfReader
 from docx import Document
@@ -7,15 +28,21 @@ def process_single_file(file_obj, kb, filename=None, full_path=None):
     """
     Orchestrates the ingestion of different file types into the KnowledgeBase.
     
+    The Lifecycle:
+    1. **Format Detection**: Routes by extension.
+    2. **Extraction**: Converts binary/unstructured data to raw text.
+    3. **Handover**: Sends text to `kb.process_text` for chunking and vectorization.
+
     Args:
-        file_obj: The file-like object or path.
-        kb: The KnowledgeBase instance to populate.
-        filename (str): Optional name of the file.
-        full_path (str): Optional absolute path to the file.
+        file_obj: The file-like object (UploadedFile) or a path string.
+        kb: The KnowledgeBase instance where the results will be stored.
+        filename (str): The display name used for future citations.
+        full_path (str): The absolute disk path (crucial for local-file indexing).
         
     Returns:
-        str: The name of the processed file.
+        str: The name of the processed file for UI reporting.
     """
+
     fname = filename if filename else getattr(file_obj, 'name', 'unknown_file')
     
     # 1. PDF Handler: Iterates through pages and extracts raw text string.

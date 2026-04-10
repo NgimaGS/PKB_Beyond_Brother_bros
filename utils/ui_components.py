@@ -1,14 +1,42 @@
+"""
+UI Components — Shared Aesthetic & Design System
+================================================
+
+Architecture Rationale:
+-----------------------
+This module centralizes all CSS styling and shared HTML rendering components.
+It ensures that the application maintains a consistent 'Glassmorphic' aesthetic.
+
+Design Standards:
+1. **Separation of Style**: No inline styles should exist in app.py.
+2. **Dynamic Tokens**: We use CSS variables for theme colors (Glass, Meta-Label).
+3. **Information Density**: Visualizations (Tokens/Metrics) should be high-density
+   but legible, using curated HSL color palettes.
+"""
+
 import streamlit as st
 
 def inject_custom_css():
     """
-    Injects the Global Professional UI Styling (SaaS Standard).
-    This keeps the main app clean and separates styling from logic.
+    Injects the global design system into the Streamlit app.
+    
+    The Strategy:
+    We use a single `st.markdown` call with `unsafe_allow_html=True` to bypass
+    Streamlit's default styling. This allows us to implement custom fonts,
+    scroll behavior, and card layouts that conform to modern SaaS standards.
     """
+
     st.markdown("""
         <style>
         /* Import Inter Font - The gold standard for modern UI */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        /* 
+           THEME EXTENSION GUIDE:
+           ----------------------
+           To add a new global color token or modify the primary accent:
+           1. Define a CSS variable in :root (e.g., --nexus-accent: #3b82f6).
+           2. Apply it to the relevant class (e.g., .nexus-card { border-color: var(--nexus-accent); }).
+        */
 
         /* Global Reset & Base Styles */
         html, body, [data-testid="stAppViewContainer"] {

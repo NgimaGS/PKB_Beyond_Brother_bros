@@ -7,19 +7,17 @@ Architecture Rationale:
 This is the central entry point of the application. It follows a 'Controller' 
 pattern in an MVC-lite architecture:
 1.  **State Management**: Orchestrates the Streamlit session persistence.
-2.  **UI Rendering**: Leverages 'ui_components.py' to maintain a high-fidelity SaaS aesthetic.
-3.  **Task Orchestration**: Coordinates between the 'KnowledgeBase' (Retrieval) 
-    and 'OllamaService' (Generation).
-4.  **Ingestion Bridge**: Uses 'file_processor.py' to handle diverse data streams 
-    (PDF, CSV, Excel, MD).
+2.  **UI Rendering**: Leverages 'ui_components.py' for a consistent SaaS aesthetic.
+3.  **Task Orchestration**: Bridges the 'KnowledgeBase' and 'OllamaService'.
+4.  **Ingestion Bridge**: Coordinates multi-format parsing via 'file_processor.py'.
 
-Structure:
-- **Phase 1: Environment Setup**: Configuration, CSS injection, and state init.
-- **Phase 2: Management Sidebar**: Engine toggles, status monitors, and active sources.
-- **Phase 3: Categorized System Settings**: Modular zones for General/ML/DL parameters.
-- **Phase 4: Analytics Dashboard**: Vector importance and normalization reports.
-- **Phase 5: Research Hub (The Heart)**: Interactive QA, RAG flow, and Token Reporting.
+Streamlit Execution Model (Mental Model for Devs):
+Streamlit re-runs the entire script from top to bottom on every user interaction.
+To prevent the application from losing data (like your indexed vectors) or
+re-instantiating heavy objects (like the KnowledgeBase), we bury them in 
+`st.session_state`. This ensures they 'survive' the re-run cycle.
 """
+
 
 import streamlit as st
 import pandas as pd
@@ -50,21 +48,37 @@ st.set_page_config(
 # Inject Global Aesthetic (CSS)
 inject_custom_css()
 
-# Initialize Persistent Sessions
-if "llm" not in st.session_state: st.session_state.llm = OllamaService()
-if "kb" not in st.session_state: st.session_state.kb = KnowledgeBase()
-if "messages" not in st.session_state: st.session_state.messages = []
+# --- PHASE 1: PERSISTENT STATE REGISTRY ---
+# We initialize our 'Core Engines' here. If they already exist in the state, 
+# Streamlit will skip these initializations, preserving the active index.
+
+if "llm" not in st.session_state: 
+    # The OllamaService handles all LLM inference and embeddings.
+    st.session_state.llm = OllamaService()
+
+if "kb" not in st.session_state: 
+    # The KnowledgeBase handles vector search and document chunking.
+    st.session_state.kb = KnowledgeBase()
+
+if "messages" not in st.session_state: 
+    # Stores the chat history for the research session.
+    st.session_state.messages = []
+
 if "config" not in st.session_state: 
+    # ConfigManager handles saving/loading settings.json to disk.
     st.session_state.config = ConfigManager()
-    # Apply initial config to objects
+    
+    # Push stored preferences into the live engines.
     st.session_state.llm.model_nickname = st.session_state.config.get("model_nickname")
     st.session_state.llm.base_url = st.session_state.config.get("ollama_host")
     st.session_state.kb.engine_mode = st.session_state.config.get("engine_mode")
     
-    # --- AUTO-LOAD PERSISTENT INDEX ---
+    # --- PROACTIVE COLD-START RECOVERY ---
+    # If a previous index exists on disk, we auto-load it on first launch.
     if os.path.exists("data/index/metadata.json") and not st.session_state.kb.documents_metadata:
         if st.session_state.kb.load_from_disk():
             st.toast("✅ Persistent Knowledge Loaded", icon="🧬")
+
 elif not hasattr(st.session_state.config, 'get'):
     # Force re-init if the object is stale/broken
     st.session_state.config = ConfigManager()
@@ -73,13 +87,20 @@ elif not hasattr(st.session_state.config, 'get'):
 if "confirm_clear_err" not in st.session_state: st.session_state.confirm_clear_err = False
 if "is_indexing" not in st.session_state: st.session_state.is_indexing = False
 
-# --- Session Hot-Patch (Ensures backward compatibility with older KB objects) ---
+# --- STATE MIGRATION & BACKWARD COMPATIBILITY ---
+# Developer Note: As the project evolves, we add new attributes to the 
+# KnowledgeBase or OllamaService classes. Since these objects are persisted 
+# in the session state, older sessions might "break" if they lack a new 
+# attribute. We "hot-patch" them here to ensure zero-crash sessions.
+
 if not hasattr(st.session_state.kb, 'spatial_granularity'):
     st.session_state.kb.spatial_granularity = "Segments"
 if not hasattr(st.session_state.kb, 'documents_spatial'):
     st.session_state.kb.documents_spatial = []
 if not hasattr(st.session_state.kb, 'indexing_errors'):
     st.session_state.kb.indexing_errors = []
+
+# --- INTELLIGENT THRESHOLDING ---
 if "neural_threshold" not in st.session_state:
     # Set intelligent default based on active model dimensions
     dims = st.session_state.llm.get_embedding_dimension()
@@ -866,13 +887,24 @@ with tab_analytics:
 # --- PHASE 5: RESEARCH HUB ---
 
 # --- FRAGMENTED CHAT HUB (Zero-Flicker Orchestration) ---
+# Developer Note (Why Fragments?):
+# Streamlit usually refreshes the ENTIRE page when any input changes. 
+# Inside this @st.fragment, only the content within THIS function is refreshed
+# when the user chats. This prevents the sidebar/tabs from flickering or 
+# disabling during a long LLM generation.
+
 @st.fragment
 def render_chat_hub(engine_choice, ollama_ok):
+    """
+    Principal interface for real-time document research.
+    Coordinates between user input, vector retrieval, and LLM streaming.
+    """
     # 5.1 Chat Display
     chat_box = st.container(height=650, border=False)
     
-    # Guidance Mode Logic
+    # Guidance Mode: If the KB is empty, we guide the user instead of searching.
     is_empty_kb = not st.session_state.kb.file_contents
+
     
     with chat_box:
         if is_empty_kb and not st.session_state.messages:
@@ -917,7 +949,7 @@ def render_chat_hub(engine_choice, ollama_ok):
             # --- SEARCH EXECUTION ---
             with st.status("💠 Processing Semantic Hub...", expanded=True) as status:
                 if engine_choice == "Deep Learning" and ollama_ok:
-                    # NEURAL RAG FLOW
+                    # 1. RETRIEVAL: Pull 'Ground Truth' from the KnowledgeBase.
                     try:
                         ctx = st.session_state.kb.get_context_for_query(query, st.session_state.llm) if not is_empty_kb else None
                     except ValueError as ve:
@@ -926,20 +958,25 @@ def render_chat_hub(engine_choice, ollama_ok):
                         st.session_state.is_searching = False
                         st.rerun()
                     
-                    # Guidance System Injection
+                    # 2. SYSTEM GUIDANCE: Triggered if no files are indexed.
                     if is_empty_kb:
                         ctx = "SYSTEM_GUIDANCE_MODE: The user's knowledge base is empty. Instead of searching, guide the user on how to use the 'System Settings' tab to upload files (PDF, CSV, etc.) and build an index. Be encouraging."
 
                     if ctx or is_empty_kb:
                         with chat_box:
                             with st.chat_message("assistant"):
+                                # 3. IDENTITY: Load the agent's persona (from AGENT.md).
                                 agent_id_mgr = IdentityManager()
                                 agent_context = agent_id_mgr.load_config()
+                                # 4. MANIFEST: Tell the LLM which files exist for citation support.
                                 manifest = st.session_state.kb.get_file_manifest() if hasattr(st.session_state.kb, 'get_file_manifest') else sorted(list(st.session_state.kb.file_contents.keys()))
+                                
+                                # 5. GENERATION: Stream the RAG-grounded response.
                                 stream = st.session_state.llm.generate_rag_response(query, ctx, st.session_state.messages, 
                                                                                   agent_context=agent_context, 
                                                                                   file_manifest=manifest)
                                 full_res = st.write_stream(stream)
+
                         stats = st.session_state.llm.get_last_stats()
                         st.session_state.messages.append({"role": "assistant", "content": full_res, "type": "rag", "stats": stats})
                         # Post-Response Token Analysis

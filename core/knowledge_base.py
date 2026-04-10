@@ -19,8 +19,11 @@ Structure Overview:
 
 Why this structure?
 This decoupled design allows the UI (app.py) to remain thin and focused on 
-presentation, while this class handles the heavy computational work.
+presentation, while this class handles the heavy computational work. It follows
+the 'Pedagogy Through Code' (PTC) philosophy, where reading the source acts
+as a tutorial for building RAG systems.
 """
+
 
 import numpy as np
 import re
@@ -54,42 +57,54 @@ class KnowledgeBase:
         """
         Initializes the semantic core with configurable windowing parameters.
         
+        Developer Note (The "Hybrid" Philosophy):
+        We maintain two completely separate state registries for ML and DL. 
+        This allows the user to switch engines in the UI without losing their
+        indexed data in the other mode.
+
         Args:
             chunk_size (int): Max characters per searchable segment.
             overlap_size (int): Context preservation between chunks.
             engine_mode (str): 'Machine Learning' (Keyword) or 'Deep Learning' (Neural).
         """
-        # Configuration
+        # --- CONFIGURATION & TUNING ---
         self.chunk_size = chunk_size
         self.overlap_size = overlap_size
         self.engine_mode = engine_mode
         self.dataset_overlap = 15 
-        self.ml_top_n = 5  # User-configurable limit for ML retrieval depth
-        self.stop_requested = False
-        self.spatial_granularity = "Segments" # 'Documents' or 'Segments'
+        self.ml_top_n = 5  # Depth of keyword retrieval
+        self.stop_requested = False # Flag for safe indexing termination
+        self.spatial_granularity = "Segments" # Controls 3D map detail: 'Documents' or 'Segments'
         
-        # Primary Storage
-        self.documents_metadata = [] # List of dicts: {text, file, page...}
-        self.documents_spatial = []  # Aggregated file-level spatial metadata
-        self.documents_matrix_agg = None # Cached document centroids
-        self.file_contents = {}      # Full source text storage
+        # --- PRIMARY DATA REGISTRY ---
+        # metadata stores the 'context' (text, file name, page numbers)
+        self.documents_metadata = [] 
+        # spatial stores 'coordinates' (x, y, z) for the 3D visualizer
+        self.documents_spatial = []  
+        # matrix_agg stores file-level centroids for "Document Mode" visualization
+        self.documents_matrix_agg = None 
+        # file_contents stores raw full-text for secondary processing
+        self.file_contents = {}      
         
-        # Analytics & UI Reporting
+        # --- OPS & REPORTING ---
         self.cleaning_report = []
         self.file_chunk_counts = {}
-        self.indexing_errors = [] # List of strings formatted for the UI report
-        self.index_embedding_model = None # Tracks which model built the current vector index
+        self.indexing_errors = [] # JSON-serializable list of UI error cards
+        self.index_embedding_model = None # Safety check to ensure model/vector alignment
         
-        # ML Engine State (Classical Statistics)
+        # --- ML ENGINE (Statistical / TF-IDF) ---
+        # The vectorizer transforms text into a sparse frequency matrix.
         self.vectorizer = TfidfVectorizer(stop_words='english')
-        self.tfidf_matrix = None     # Sparse matrix after fit()
+        self.tfidf_matrix = None     
         self.lemmatizer = WordNetLemmatizer()
 
-        # DL Engine State (Neural Embeddings)
-        self.embeddings = None       # Dense NumPy array
-        self._embed_cache = {}       # Loaded dynamically in build_index
+        # --- DL ENGINE (Neural / Embeddings) ---
+        # Dense vectors generated via Ollama.
+        self.embeddings = None       
+        self._embed_cache = {}       # Local JSON-backed cache to avoid re-embedding
         self._active_cache_path = None
-        self.neural_threshold = 0.35 # Default, can be tuned via app.py
+        self.neural_threshold = 0.35 # Mathematical cutoff for 'relevance'
+
 
 
 
@@ -390,8 +405,18 @@ class KnowledgeBase:
     def get_cluster_spatial_data(self, cluster_id):
         """
         Specialized localized UMAP for 'Drill-Down' exploration.
-        Filters data by cluster and re-runs dimensionality reduction on the subset.
+        
+        Theory Note: UMAP (Uniform Manifold Approximation)
+        -------------------------------------------------
+        We use UMAP to project high-dimensional vectors (e.g., 768 or 1024 dims) 
+        into 2D/3D space for human visualization.
+        
+        Key Parameters:
+        - n_neighbors: Controls local vs. global structure. Low values 
+          focus on small clusters; high values focus on the 'big picture'.
+        - min_dist: Controls how tightly points are packed.
         """
+
         # Determine source data based on granularity
         is_doc_mode = getattr(self, 'spatial_granularity', "Segments") == "Documents"
         
@@ -498,11 +523,18 @@ class KnowledgeBase:
 
     def search(self, query_text, llm_service=None, top_n=None):
         """
-        Orchestrates the search request.
+        Orchestrates the search request across the selected engine.
         
-        Math: Cosine Similarity
-        Score = (A . B) / (||A|| * ||B||)
-        This measures the 'angle' between the query and documents in vector space.
+        The Mathematical Principle: Cosine Similarity
+        We treat both the user query and the document segments as vectors in 
+        high-dimensional space. We then calculate the 'angle' between them.
+        *   **Angle = 0° (Similarity = 1.0)**: Perfect match.
+        *   **Angle = 90° (Similarity = 0.0)**: No commonality.
+
+        Args:
+            query_text (str): The user's search query.
+            llm_service: Required for 'Deep Learning' mode to vectorize the query.
+            top_n (int): Number of results to return.
         """
         if not self.documents_metadata: return []
         # Support for stale session objects that might lack this attribute
@@ -513,6 +545,7 @@ class KnowledgeBase:
             return self._search_tfidf(query_text, limit)
         else:
             return self._search_neural(query_text, llm_service, limit)
+
 
     def _search_tfidf(self, query, top_n):
         """Keyword matching via TF-IDF dot-products."""
@@ -534,29 +567,39 @@ class KnowledgeBase:
         return sorted(results, key=lambda x: x['score'], reverse=True)[:top_n]
 
     def _search_neural(self, query, llm, top_n):
-        """Contextual matching via dense vector similarity."""
+        """
+        Contextual matching via dense vector similarity.
+        
+        Developer Note on Parallelization:
+        Instead of looping through documents (O(n)), we use NumPy's vectorization
+        to calculate matches across the entire index simultaneously.
+        """
         if self.embeddings is None or not llm: return []
         q_vec = np.array(llm.embed_text(query))
         if q_vec.size == 0: return []
         
-        # Dimension Guardrail: Prevent linear algebra crashes if models switched
+        # --- DIMENSION GUARDRAIL ---
+        # If the user switched models (e.g., Nomic -> Gemma) without re-indexing,
+        # the math will fail as the vectors have different lengths.
         if q_vec.shape[0] != self.embeddings.shape[1]:
             raise ValueError(f"Neural Dimension Mismatch: Index is {self.embeddings.shape[1]} (from {self.index_embedding_model}), but Query is {q_vec.shape[0]} (from {llm.embedding_model}). Please re-index.")
 
         
         # Parallel Cosine Similarity using NumPy
+        # Formula: (A . B) / (||A|| * ||B||)
         q_norm = np.linalg.norm(q_vec)
         d_norms = np.linalg.norm(self.embeddings, axis=1)
         sims = np.dot(self.embeddings, q_vec) / (q_norm * d_norms + 1e-9)
 
         results = []
         for i, score in enumerate(sims):
+            # We filter by a threshold to ensure quality in the final LLM context.
             if score > self.neural_threshold: 
                 meta = self.documents_metadata[i].copy()
-
                 meta['score'] = round(float(score), 4)
                 results.append(meta)
         return sorted(results, key=lambda x: x['score'], reverse=True)[:top_n]
+
 
     def get_context_for_query(self, query_text, llm, top_n=5):
         """Formats the top N results as a structured text block for the LLM."""

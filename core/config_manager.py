@@ -1,8 +1,25 @@
+"""
+Config Manager — Settings Persistence Layer
+============================================
+
+Architecture Rationale:
+-----------------------
+This module centralizes all application state that survives between restarts.
+It handles serialization to `data/settings.json`, ensuring that user preferences
+(Model choices, paths, etc.) are always restored.
+
+Design Note: Default-Merging
+We use a 'Merge with Defaults' strategy. This ensures that when new features
+are added to the code, existing user config files are automatically patched
+with the missing default keys.
+"""
+
 import json
 import os
 
 class ConfigManager:
     """Manages persistent application settings via a JSON file."""
+
     
     DEFAULT_CONFIG = {
         "log_path": "data/",

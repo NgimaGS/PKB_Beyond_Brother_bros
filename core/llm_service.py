@@ -6,16 +6,18 @@ Architecture Rationale:
 -----------------------
 This module encapsulates all communication with the local Ollama inference server.
 By isolating LLM logic here, the main application remains 'model-agnostic'. 
-It manages:
-1. Neural Embeddings (Dense Vector generation).
-2. RAG (Retrieval-Augmented Generation) Chat Orchestration.
-3. Document Summarization.
-4. Token Analysis (Measuring input/output efficiency).
+
+Core Responsibilities:
+1. **Neural Embeddings**: Dense Vector generation for semantic search.
+2. **RAG Orchestration**: Injecting retrieved context into LLM prompts.
+3. **Summarization**: Distilling long documents into concise briefs.
+4. **Token Analytics**: Capturing inference metrics for performance monitoring.
 
 Design Pattern: Service Provider
-The OllamaService acts as a swappable provider. If we transition to OpenAI or
+The OllamaService acts as a pluggable provider. If we transition to OpenAI or
 Anthropic, only this file needs significant modification.
 """
+
 
 import ollama
 import re
@@ -172,8 +174,14 @@ class OllamaService:
                              file_manifest: list[str] | None = None) -> list[dict]:
         """
         Constructs a prompt that grounds the LLM in the provided document context.
-        Implements a strict 'System' role to prevent hallucinations.
+        
+        Developer Insight (Prompt Engineering):
+        We use a three-tier system prompt:
+        1. **Identity**: Role instructions from AGENT.md.
+        2. **Grounding**: The specific file manifest and retrieval context.
+        3. **Constraints**: Formatting rules to prevent 'context-leaking' or hallucinations.
         """
+
         system_prompt = ""
         if agent_context:
             system_prompt += f"{agent_context}\n\n"
@@ -220,8 +228,21 @@ class OllamaService:
                                 file_manifest: list[str] | None = None):
         """
         Streams a RAG-grounded response from Ollama.
-        Yields text chunks and captures token usage stats upon completion.
+        
+        The 'Streaming' Philosophy:
+        Instead of waiting for the full response, we yield text chunks immediately.
+        The last chunk (marked 'done': True) contains the mathematical metadata 
+        (tokens, duration) which we capture for the UI.
+
+        Theory Note: Repetition Penalties
+        --------------------------------
+        Local models (especially smaller ones) can get stuck in "feedback loops" 
+        where they repeat the same sentence. 
+        - repeat_penalty (1.2): Higher values make the model less likely to repeat tokens.
+        - repeat_last_n (64): The "memory window" the model checks for repetitions.
         """
+
+
         messages = self._build_rag_messages(query, context_text, chat_history, agent_context, file_manifest)
 
         try:
