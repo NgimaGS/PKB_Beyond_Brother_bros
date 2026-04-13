@@ -3,3 +3,13 @@ PyPDF2
 scikit-learn
 numpy
 pandas
+nltk
+pycryptodome
+ollama
+openpyxl
+umap-learn
+plotly
+scipy
+langchain-ollama
+python-docx
+python-pptx

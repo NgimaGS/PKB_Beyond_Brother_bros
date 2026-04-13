@@ -23,4 +23,9 @@ Thumbs.db
 # *.pdf
 # *.md
 # !README.md
-# !SETUP.md
+
+test_knowledge_base/test1.md
+test_knowledge_base/sub/test2.md
+run.bat
+
+TODO.md
