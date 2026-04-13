@@ -73,6 +73,12 @@ if "config" not in st.session_state:
     st.session_state.llm.base_url = st.session_state.config.get("ollama_host")
     st.session_state.kb.engine_mode = st.session_state.config.get("engine_mode")
     
+    saved_chat = st.session_state.config.get("chat_model")
+    if saved_chat: st.session_state.llm.model_name = saved_chat
+    
+    saved_embed = st.session_state.config.get("embedding_model")
+    if saved_embed: st.session_state.llm.embedding_model = saved_embed
+    
     # --- PROACTIVE COLD-START RECOVERY ---
     # If a previous index exists on disk, we auto-load it on first launch.
     if os.path.exists("data/index/metadata.json") and not st.session_state.kb.documents_metadata:
@@ -508,15 +514,21 @@ with tab_settings:
             st.write(f"Active Model: **{st.session_state.llm.model_name}**")
             st.write(f"Embedding Engine: **{st.session_state.llm.embedding_model}**")
             
+            running_models = st.session_state.llm.get_running_models()
+            def format_model_name(m_name):
+                return f"🟢 {m_name} (Running)" if m_name in running_models else m_name
+            
             # 3.3.1 Chat Model with Refresh
             chat_models = st.session_state.llm.get_chat_models()
             col_chat, col_refresh1 = st.columns([4, 1])
             with col_chat:
                 if chat_models:
                     new_model = st.selectbox("Switch Chat Model", chat_models, 
+                                            format_func=format_model_name,
                                             index=chat_models.index(st.session_state.llm.model_name) if st.session_state.llm.model_name in chat_models else 0)
                     if new_model != st.session_state.llm.model_name:
                         if st.session_state.llm.set_model(new_model):
+                            st.session_state.config.save({"chat_model": new_model})
                             st.success(f"Model switched to {new_model}")
                             st.rerun()
             with col_refresh1:
@@ -535,9 +547,11 @@ with tab_settings:
             with col_embed:
                 if embed_models:
                     new_embed = st.selectbox("Switch Embedding Model", embed_models,
+                                            format_func=format_model_name,
                                             index=embed_models.index(st.session_state.llm.embedding_model) if st.session_state.llm.embedding_model in embed_models else 0)
                     if new_embed != st.session_state.llm.embedding_model:
                         if st.session_state.llm.set_embedding_model(new_embed):
+                            st.session_state.config.save({"embedding_model": new_embed})
                             # Auto-Scale Threshold based on NEW model dimensions
                             new_dims = st.session_state.llm.get_embedding_dimension()
                             if new_dims <= 384: st.session_state.neural_threshold = 0.25

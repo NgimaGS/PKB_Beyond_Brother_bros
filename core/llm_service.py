@@ -19,6 +19,7 @@ Anthropic, only this file needs significant modification.
 """
 
 
+from __future__ import annotations
 import ollama
 import re
 
@@ -125,6 +126,14 @@ class OllamaService:
         try:
             models = ollama.list()
             return [m.model for m in models.models]
+        except Exception:
+            return []
+
+    def get_running_models(self) -> list[str]:
+        """Returns a list of models currently loaded in memory."""
+        try:
+            res = ollama.ps()
+            return [m.model for m in res.models]
         except Exception:
             return []
 

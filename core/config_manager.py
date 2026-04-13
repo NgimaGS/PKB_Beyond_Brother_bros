@@ -29,7 +29,9 @@ class ConfigManager:
         "clearing_threshold": 40,
         "engine_mode": "Deep Learning",
         "ingestion_size_limit_mb": 50,
-        "ingestion_size_limit_active": False
+        "ingestion_size_limit_active": False,
+        "chat_model": "gemma4:e4b",
+        "embedding_model": "mxbai-embed-large"
     }
     
     def __init__(self, config_path="data/settings.json"):
