@@ -29,3 +29,6 @@ test_knowledge_base/sub/test2.md
 run.bat
 
 TODO.md
+/scratch
+/data/index
+/data/*.json
