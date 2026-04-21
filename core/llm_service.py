@@ -110,11 +110,12 @@ class OllamaService:
             # Extract models names (Ollama returns objects with a 'model' attribute)
             model_names = [m.model for m in models.models]
             
-            # Check for both the LLM and the Embedding model
+            # Check for both the LLM, the Embedding model, and the Vision model
             has_llm = any(self.model_name in name for name in model_names)
             has_embed = any(self.embedding_model in name for name in model_names)
+            has_vision = any("llava" in name for name in model_names)
             
-            self._available = has_llm and has_embed
+            self._available = has_llm and has_embed and has_vision
             return self._available
         except Exception:
             self._available = False
@@ -309,3 +310,25 @@ class OllamaService:
     def get_last_stats(self) -> dict:
         """Returns the token analytics from the most recent LLM operation."""
         return self.last_run_stats
+
+    # ------------------------------------------------------------------
+    # 5. VISION & MULTI-MODAL
+    # ------------------------------------------------------------------
+
+    def describe_image(self, image_path: str, vision_model: str = "llava:latest") -> str:
+        """
+        Uses a local vision model (Llava) to generate a semantic description 
+        of an image file.
+        """
+        try:
+            with open(image_path, "rb") as f:
+                img_data = f.read()
+                
+            response = ollama.generate(
+                model=vision_model,
+                prompt="Describe this image in detail. Focus on the main subjects, colors, and overall composition.",
+                images=[img_data]
+            )
+            return response.get("response", "No description generated.")
+        except Exception as e:
+            return f"Vision Error: {str(e)}"

@@ -29,7 +29,11 @@ class ConfigManager:
         "clearing_threshold": 40,
         "engine_mode": "Deep Learning",
         "ingestion_size_limit_mb": 50,
-        "ingestion_size_limit_active": False
+        "ingestion_size_limit_active": False,
+        "image_gen_active": False,
+        "image_model_id": "runwayml/stable-diffusion-v1-5",
+        "image_device": "cuda",
+        "vision_model": "llava:latest"
     }
     
     def __init__(self, config_path="data/settings.json"):

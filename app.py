@@ -34,6 +34,7 @@ from core.knowledge_base import KnowledgeBase
 from core.llm_service import OllamaService
 from core.config_manager import ConfigManager
 from core.identity_manager import IdentityManager
+from core.image_service import LocalImageService
 from utils.ui_components import inject_custom_css, render_header, render_sidebar_branding, render_token_report, get_plotly_template
 from utils.file_processor import process_single_file
 
@@ -59,6 +60,10 @@ if "llm" not in st.session_state:
 if "kb" not in st.session_state: 
     # The KnowledgeBase handles vector search and document chunking.
     st.session_state.kb = KnowledgeBase()
+
+if "img_service" not in st.session_state:
+    # Manages local Stable Diffusion generation
+    st.session_state.img_service = LocalImageService()
 
 if "messages" not in st.session_state: 
     # Stores the chat history for the research session.
@@ -332,7 +337,7 @@ if hasattr(st.session_state.kb, 'ingestion_log') and st.session_state.kb.ingesti
             st.code("\n".join(log['skipped']), language="text")
 
 # --- PHASE 3 & 4: CATEGORIZED SETTINGS & ANALYTICS ---
-tab_research, tab_analytics, tab_settings = st.tabs(["💠 Research Hub", "📊 Vector Analytics", "⚙️ System Settings"])
+tab_research, tab_analytics, tab_studio, tab_settings = st.tabs(["💠 Research Hub", "📊 Vector Analytics", "🎨 Image Studio", "⚙️ System Settings"])
 
 with tab_settings:
     st.markdown("### ⚙️ System Configuration")
@@ -655,6 +660,68 @@ with tab_settings:
             else:
                 st.info("Reference notes will appear here after the first persona configuration.")
 
+        # --- NEW: VISUAL INTELLIGENCE & IMAGE GENERATION ---
+        st.markdown("---")
+        st.markdown("#### 🎨 Visual Intelligence (Stable Diffusion)")
+        st.markdown("<p style='font-size: 14px; color: #94a3b8;'>Manage local image generation models and visual indexing capabilities.</p>", unsafe_allow_html=True)
+        
+        img_active = st.session_state.config.get("image_gen_active")
+        new_img_active = st.toggle("Enable Image Generation", value=img_active, help="Unlock /image command in chat and the Image Studio tab.")
+        
+        if new_img_active != img_active:
+            st.session_state.config.save({"image_gen_active": new_img_active})
+            st.rerun()
+
+        if new_img_active:
+            st.info("💡 Image generation is active. Ensure you have downloaded at least one model below.")
+            
+            c_mod, c_dev = st.columns(2)
+            with c_mod:
+                current_model_id = st.session_state.config.get("image_model_id")
+                # Predefined recommended models
+                model_options = LocalImageService.RECOMMENDED_MODELS
+                selected_label = next((k for k, v in model_options.items() if v == current_model_id), "Custom")
+                
+                new_label = st.selectbox("Active Image Model", list(model_options.keys()), 
+                                        index=list(model_options.keys()).index(selected_label) if selected_label in model_options else 0)
+                
+                if model_options[new_label] != current_model_id:
+                    st.session_state.config.save({"image_model_id": model_options[new_label]})
+                    st.rerun()
+            
+            with c_dev:
+                current_dev = st.session_state.config.get("image_device")
+                new_dev = st.selectbox("Processing Device", ["cuda", "cpu"], 
+                                      index=0 if current_dev == "cuda" else 1,
+                                      help="GPU (cuda) is significantly faster for image generation.")
+                if new_dev != current_dev:
+                    st.session_state.config.save({"image_device": new_dev})
+                    st.rerun()
+
+            # --- MODEL DOWNLOADER HUB ---
+            st.markdown("##### 📥 Model Downloader")
+            for label, m_id in model_options.items():
+                is_down = st.session_state.img_service.is_model_downloaded(m_id)
+                col1, col2 = st.columns([3, 1])
+                col1.write(f"**{label}** (`{m_id}`)")
+                if is_down:
+                    col2.success("Installed")
+                else:
+                    if col2.button("Download", key=f"dl_{m_id}", use_container_width=True):
+                        with st.spinner(f"Downloading {label} (~2-5GB)..."):
+                            if st.session_state.img_service.download_model(m_id):
+                                st.success(f"{label} ready!")
+                                st.rerun()
+                            else:
+                                st.error("Download failed.")
+            
+            st.markdown("---")
+            st.markdown("##### 👁️ Neural Vision (Llava)")
+            vision_model = st.session_state.config.get("vision_model")
+            st.write(f"Active Vision Model: `{vision_model}`")
+            st.info("Used for 'captioning' generated images during indexing into the Galaxy.")
+
+
     # 3.4 Process Orchestration
     if "is_indexing" not in st.session_state: st.session_state.is_indexing = False
     
@@ -884,6 +951,68 @@ with tab_analytics:
         st.markdown("<p class='meta-label' style='margin-top: 30px;'>NLP Pipeline Report</p>", unsafe_allow_html=True)
         st.dataframe(pd.DataFrame(st.session_state.kb.cleaning_report), width="stretch", height=200, hide_index=True)
 
+with tab_studio:
+    st.markdown("### 🎨 Image Studio")
+    
+    if not st.session_state.config.get("image_gen_active"):
+        st.warning("Image Generation is disabled. Enable it in System Settings to use this tab.")
+    elif not st.session_state.img_service.is_model_downloaded():
+        st.error(f"Selected model `{st.session_state.config.get('image_model_id')}` is not downloaded. Visit System Settings.")
+    else:
+        # Sidebar for parameters
+        col_gen, col_gal = st.columns([1, 2])
+        
+        with col_gen:
+            st.markdown("#### 🔬 Parameters")
+            studio_prompt = st.text_area("Positive Prompt", placeholder="An astronaut riding a horse in hyper-realistic style...", height=100)
+            studio_neg = st.text_area("Negative Prompt", placeholder="blurry, distorted, low quality...", height=68)
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                studio_steps = st.slider("Steps", 1, 50, 20)
+                studio_seed = st.number_input("Seed", value=-1, help="-1 for random")
+            with c2:
+                studio_cfg = st.slider("Guidance Scale", 1.0, 20.0, 7.5)
+                
+            if st.button("🚀 Generate High Detail", width="stretch", type="primary"):
+                with st.spinner("Rendering..."):
+                    seed = None if studio_seed == -1 else studio_seed
+                    path, filename = st.session_state.img_service.generate(
+                        studio_prompt, 
+                        negative_prompt=studio_neg,
+                        steps=studio_steps,
+                        guidance_scale=studio_cfg,
+                        seed=seed
+                    )
+                    if path:
+                        st.image(path, caption="Studio Render Result")
+                        st.session_state.messages.append({"role": "assistant", "content": f"🎨 Studio Render: **{studio_prompt}**", "type": "image", "path": path, "filename": filename})
+                        st.success(f"Saved as {filename}")
+                    else:
+                        st.error(f"Render Failed: {filename}")
+        
+        with col_gal:
+            st.markdown("#### 🖼️ History & Gallery")
+            img_dir = "data/images"
+            if os.path.exists(img_dir):
+                files = sorted([f for f in os.listdir(img_dir) if f.endswith(".png")], reverse=True)
+                if files:
+                    # Render in a grid
+                    cols = st.columns(3)
+                    for idx, f in enumerate(files[:12]): # Show last 12
+                        path = os.path.join(img_dir, f)
+                        with cols[idx % 3]:
+                            st.image(path, use_container_width=True)
+                            if st.button("🧬 Index", key=f"gal_idx_{f}", use_container_width=True):
+                                with st.spinner("Analyzing..."):
+                                    desc = st.session_state.llm.describe_image(path)
+                                    st.session_state.kb.process_image_asset(f, desc, path)
+                                    st.success(f"Indexed {f}")
+                else:
+                    st.info("No images generated yet.")
+            else:
+                st.info("Gallery directory not found.")
+
 # --- PHASE 5: RESEARCH HUB ---
 
 # --- FRAGMENTED CHAT HUB (Zero-Flicker Orchestration) ---
@@ -920,6 +1049,11 @@ def render_chat_hub(engine_choice, ollama_ok):
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"], unsafe_allow_html=True)
+                
+                # Render historical images
+                if msg.get("type") == "image" and os.path.exists(msg.get("path", "")):
+                    st.image(msg["path"])
+
                 # Inline Results for Retrieval-only search
                 if msg.get("type") == "results":
                     for fname, chunks in msg["data"].items():
@@ -936,12 +1070,41 @@ def render_chat_hub(engine_choice, ollama_ok):
         if st.session_state.is_searching and st.session_state.pending_query:
             query = st.session_state.pending_query
             
+            # --- IMAGE GENERATION COMMAND ---
+            if query.lower().startswith("/image "):
+                prompt = query[7:].strip()
+                if not st.session_state.config.get("image_gen_active"):
+                    st.session_state.messages.append({"role": "assistant", "content": "⚠️ **Image Generation is disabled.** Enable it in System Settings."})
+                elif not st.session_state.img_service.is_model_downloaded():
+                    st.session_state.messages.append({"role": "assistant", "content": f"⚠️ **Model not found.** Please download `{st.session_state.config.get('image_model_id')}` in System Settings."})
+                else:
+                    with st.chat_message("assistant"):
+                        with st.spinner(f"🎨 Visualizing: '{prompt}'..."):
+                            path, filename = st.session_state.img_service.generate_quick(prompt)
+                            if path and os.path.exists(path):
+                                st.image(path, caption=f"Generated: {prompt}")
+                                st.session_state.messages.append({"role": "assistant", "content": f"🎨 Generated: **{prompt}**", "type": "image", "path": path, "filename": filename})
+                                
+                                # Indexing UI (inline)
+                                if st.button("🧬 Index into Galaxy", key=f"index_{filename}"):
+                                    with st.spinner("Analyzing with Neural Vision (Llava)..."):
+                                        desc = st.session_state.llm.describe_image(path)
+                                        st.session_state.kb.process_image_asset(filename, desc, path)
+                                        st.success("Image indexed into the 3D map!")
+                                        st.rerun()
+                            else:
+                                st.error(f"Generation failed: {filename}")
+                
+                st.session_state.is_searching = False
+                st.session_state.pending_query = None
+                st.rerun()
+
             # --- HELP COMMANDS ---
             if query.lower() in ["/help", "/examples"]:
                 if engine_choice == "Machine Learning":
                     help_msg = "### 🔦 ML Search Tips\nUse specific keywords like **'Revenue 2024'** or **'Protocol X'**. Avoid natural questions as this engine matches literal vector intersections."
                 else:
-                    help_msg = "### 🧠 DL RAG Tips\nAsk natural questions like **'What are the key risks mentioned in file X?'** or **'Summarize the conclusion of page 4'**."
+                    help_msg = "### 🧠 DL RAG Tips\nAsk natural questions like **'What are the key risks mentioned in file X?'** or **'Summarize the conclusion of page 4'**.\n\n**Visuals**: Use `/image [prompt]` to generate local visuals (requires activation)."
                 st.session_state.messages.append({"role": "assistant", "content": help_msg})
                 st.session_state.is_searching = False
                 st.rerun()

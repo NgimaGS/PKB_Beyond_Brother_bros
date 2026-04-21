@@ -252,6 +252,24 @@ class KnowledgeBase:
             txt = df.iloc[start:end].to_string(index=False)
             self.documents_metadata.append({"text": txt, "file": filename, "page": f"Rows {start}-{end}"})
 
+    def process_image_asset(self, filename, description, image_path):
+        """
+        Registers a generated image as a semantic unit in the knowledge base.
+        This allows images to be searched and visualized in the 3D map.
+        """
+        # We store the Llava-generated description as the 'text' for vectorization
+        self.documents_metadata.append({
+            "text": f"[IMAGE ASSET: {filename}]\n{description}",
+            "file": filename,
+            "full_path": image_path,
+            "page": "Image Asset",
+            "is_image": True # Flag for specialized rendering
+        })
+        
+        # Also store in file_contents for summarization safety
+        if filename not in self.file_contents:
+            self.file_contents[filename] = description
+
     # ------------------------------------------------------------------
     # PHASE 4: VECTORIZATION CORE
     # ------------------------------------------------------------------

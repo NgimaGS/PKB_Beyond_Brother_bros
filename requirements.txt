@@ -12,4 +12,11 @@ plotly
 scipy
 langchain-ollama
 python-docx
-python-pptx
+torch
+diffusers
+transformers
+accelerate
+huggingface-hub
+safetensors
+fastapi
+uvicorn
