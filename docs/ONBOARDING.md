@@ -12,40 +12,63 @@ The system is built so you can switch between these instantly.
 
 ---
 
-## 🛠️ Environmental Setup
+## 💻 System Requirements
 
-### 1. The Python Stack
-We use Python 3.10+.
+To ensure a smooth experience with the engine's neural core and image intelligence, please refer to the following tiers:
+
+### 🥉 Tier 1: Minimum (CPU-Only)
+*   **RAM**: 16GB (Strict minimum for loading Llama 3.1 8B).
+*   **CPU**: 4+ Cores (modern Intel i5/AMD Ryzen 5).
+*   **Storage**: 20GB free space for models.
+*   **Experience**: Acceptable chat response; Image generation will take several minutes per image.
+
+### 🥈 Tier 2: Functional (Dedicated GPU)
+*   **VRAM**: 4GB - 6GB (NVIDIA RTX 2060 / 3050 series).
+*   **RAM**: 16GB.
+*   **Experience**: Fast Stable Diffusion v1.5 generation; acceptable vision analysis speeds.
+
+### 🥇 Tier 3: Recommended (High-Performance)
+*   **VRAM**: 8GB - 12GB+ (NVIDIA RTX 3080 / 4070+).
+*   **RAM**: 32GB.
+*   **Experience**: Near-instantaneous SDXL Turbo generation; smooth multi-modal context processing.
+
+---
+
+## 🛠️ Environmental Setup & Prerequisites
+
+Before proceeding, ensure the following software is installed:
+
+### 1. The Local AI Stack (Ollama)
+The engine relies on Ollama for both LLM and Vision tasks.
+1.  **Install**: [Ollama.com](https://ollama.com/)
+2.  **Pull Models**:
+    ```bash
+    ollama pull llama3.1:8b            # Primary Brain
+    ollama pull mxbai-embed-large      # Similarity Senses
+    ollama pull llava:latest           # Visual Intelligence (Vision)
+    ```
+
+### 2. The Python Environment
+We use Python 3.10+ for core logic.
 ```bash
-# 1. Create a virtual environment
+# Setup virtual environment
 python -m venv venv
-
-# 2. Activate it
-# Windows: venv\Scripts\activate
-# Unix: source venv/bin/activate
-
-# 3. Install dependencies
+# Activate (Windows: venv\Scripts\activate | Unix: source venv/bin/activate)
 pip install -r requirements.txt
 ```
 
-### 2. The Local AI Stack (Ollama)
-This project requires [Ollama](https://ollama.com/) to be running on your local machine.
-1. Download and install Ollama.
-2. Pull the default models:
-```bash
-ollama pull llama3.1:8b            # The "Brain" (LLM)
-ollama pull mxbai-embed-large      # The "Senses" (Embeddings)
-ollama pull nomic-embed-text       # Optional: High speed embeddings
-```
+### 3. GPU Acceleration (NVIDIA)
+If using a GPU, ensure you have the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) installed to enable hardware acceleration in Torch.
 
-### 3. Verification
+---
+
+## 🏗️ Verification & Health Check
+
 Run the app locally:
 ```bash
 streamlit run app.py
 ```
-Check the **"System Health"** section in the sidebar. If "Ollama Connection" is green, you are ready.
-
----
+Check the **"System Health"** section in the sidebar. If "Ollama Connection" is green, you are ready. Use the **"Hardware"** indicator to verify if the system is utilizing your GPU.
 
 ## 🏗️ Architecture for Newcomers
 

@@ -11,71 +11,53 @@ A professional-grade **Hybrid NLP Hub** designed for researcher-level knowledge 
 
 Explore the technical foundations and architectural philosophy of the Nexus Engine:
 
-*   **[🚀 Getting Started (Onboarding)](./docs/ONBOARDING.md)**: Your first stop. How to set up Python, Ollama, and the Local AI stack.
-*   **[🏗️ Architecture & Design](./docs/architecture_design.md)**: Deep dive into the "Hybrid Hub" philosophy and the **Query Lifecycle** (how data flows).
-*   **[📊 Machine Learning Guide](./docs/machine_learning.md)**: Technical breakdown of TF-IDF, Lemmatization, and Statistical Retrieval.
-*   **[🧠 Deep Learning Guide](./docs/deep_learning.md)**: Explaining Neural Embeddings, RAG, and Ollama integration.
-*   **[🤝 Contributor Etiquette](./docs/etiquette.md)**: Essential guidelines for coding standards and "Pedagogy-First" documentation.
+*   **⚡ [Quick Start Guide](./docs/LAUNCH_GUIDE.md)**: step-by-step instructions for Docker, Local, and Ollama deployment.
+*   **[🚀 Getting Started (Onboarding)](./docs/ONBOARDING.md)**: Hardware requirements, prerequisites, and initial configuration.
+*   **[🎯 Engine Feature Matrix](./docs/FEATURES_DETAIL.md)**: Hierarchical list of all capabilities with direct links to the source code.
+*   **[🏗️ Architecture & Design](./docs/architecture_design.md)**: Deep dive into the "Hybrid Hub" philosophy and query lifecycle.
+*   **[🎨 Image Intelligence](./docs/IMAGE_INTELLIGENCE.md)**: Guide to local Stable Diffusion synthesis and vision-based indexing.
+*   **[🤝 Contributor Etiquette](./docs/etiquette.md)**: guidelines for coding standards and "Pedagogy-First" documentation.
 *   **[📝 Project Roadmap](./TODO.md)**: Current status and upcoming feature priorities.
 
 
 ---
 
-## ✨ Workspace Highlights
+## ✨ Feature Highlights
 
-### 1. Hybrid Intelligence
-Toggle instantly between **TF-IDF Keyword Search** (High Speed) and **Neural Semantic Search** (High Accuracy). Use the AI Research Hub to chat with your local documents using RAG-grounded Llama 3.1.
-
-### 2. Deep File Ingestion
-Recursive directory mounting supports mass-indexing of PDFs, Markdown, Text, and Datasets (CSV/Excel). Every file is automatically "Sentence-Aware" chunked for maximum search precision.
-
-### 3. Integrated Vector Analytics
-Visualize the statistical importance of terms across your corpus and monitor the NLP cleaning pipeline's efficiency in real-time.
+- **Hybrid Search**: Toggle instantly between **TF-IDF Keyword Matching** and **Neural Semantic Search**.
+- **Deep File Ingestion**: Automated extraction of **PDF, Markdown, TXT, and CSV** with recursive directory mounting.
+- **RAG-Grounded Chat**: Context-aware AI assistant utilizing **Llama 3.1** via Ollama for document-verified responses.
+- **Image Intelligence**: Local **Stable Diffusion** synthesis and **Llava-based vision** for generating and indexing visual assets.
+- **Vector Analytics**: Real-time visualization of term importance and neural clustering performance.
+- **Progressive Indexing**: Background-safe, asynchronous indexing to ensure zero UI locking during data ingestion.
 
 ---
 
-## 🐋 Deployment via Docker
+## ⚡ Quick Start
 
-The workspace is fully containerized for consistent deployment across any environment.
+The Nexus Engine is designed to be up and running in minutes. Choose your preferred deployment method in the **[Launch Guide](./docs/LAUNCH_GUIDE.md)**:
 
-### 1. Prerequisites
-- [Docker & Docker Compose](https://www.docker.com/products/docker-desktop/)
-- [Ollama](https://ollama.com/) (Running on your host machine)
-
-### 2. Launching the Engine
-```bash
-# 1. Clone the repository
-git clone <repo-url>
-cd PKB_Beyond_Brother_bros
-
-# 2. Build and start the container
-docker-compose up --build
-```
-*Access the interface at **http://localhost:8501***
-
----
-
-## 🛠️ Local Installation (Development)
-
-### 1. Environment Setup
-```bash
-python -m venv venv
-# Windows: venv\Scripts\activate | Unix: source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2. Launching the Workspace
-```bash
-streamlit run app.py
-```
+1.  **Docker Compose**: The recommended pathway for a guaranteed consistent environment.
+2.  **Local Installation**: Best for active development and customization.
+3.  **Ollama Setup**: Essential steps for pulling the required AI and Vision models.
 
 ---
 
 ## 🗄️ Core Structure
+
 ```text
-├── app.py                 # Principal Orchestration Hub
-├── core/                  # Intelligence Engines (KnowledgeBase, LLM)
-├── utils/                 # Logistics (UI Components, Ingestion)
-├── data/                  # Persistent Storage (Neural Cache)
-└── docs/                  # Technical Guides & Methodology
+├── app.py                 # Principal Orchestration Hub: Manages UI, Session State, and Fragment logic.
+├── core/                  # Intelligence Engines: The architectural core of the system.
+│   ├── knowledge_base.py  # Hybrid retrieval logic (TF-IDF & FAISS) and vector store management.
+│   ├── llm_service.py     # Ollama API orchestration, vision-to-text, and RAG prompt assembly.
+│   ├── image_service.py   # Stable Diffusion pipelines, VRAM management, and synthesis engine.
+│   └── config_manager.py  # JSON-based persistence and real-time settings coordination.
+├── utils/                 # Logistics & Interface: The supporting tools and UI utilities.
+│   ├── ui_components.py   # Centralized CSS, sidebar layouts, and Streamlit Fragment definitions.
+│   └── file_processor.py  # Universal extractor for multi-format document ingestion and chunking.
+├── data/                  # Persistence Layer: Locally stored neural cache and user data.
+│   ├── index/             # Serialized vector stores for high-speed local retrieval.
+│   ├── images/            # Output gallery for synthesized and semantically tagged visual assets.
+│   └── settings.json      # Dynamic user preferences and system configuration.
+└── docs/                  # Documentation Suite: Comprehensive technical guides and pedagogy.
 ```
