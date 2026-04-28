@@ -43,7 +43,7 @@ import os
 import hashlib
 import pickle
 
-# --- NLTK Resource Management ---
+# NLTK Resource Management
 # WordNet is used for Lemmatization (finding the root of a word).
 nltk.download('wordnet', quiet=True)
 nltk.download('omw-1.4', quiet=True)
@@ -67,7 +67,7 @@ class KnowledgeBase:
             overlap_size (int): Context preservation between chunks.
             engine_mode (str): 'Machine Learning' (Keyword) or 'Deep Learning' (Neural).
         """
-        # --- CONFIGURATION & TUNING ---
+        # CONFIGURATION & TUNING
         self.chunk_size = chunk_size
         self.overlap_size = overlap_size
         self.engine_mode = engine_mode
@@ -76,7 +76,7 @@ class KnowledgeBase:
         self.stop_requested = False # Flag for safe indexing termination
         self.spatial_granularity = "Segments" # Controls 3D map detail: 'Documents' or 'Segments'
         
-        # --- PRIMARY DATA REGISTRY ---
+        # PRIMARY DATA REGISTRY
         # metadata stores the 'context' (text, file name, page numbers)
         self.documents_metadata = [] 
         # spatial stores 'coordinates' (x, y, z) for the 3D visualizer
@@ -86,19 +86,19 @@ class KnowledgeBase:
         # file_contents stores raw full-text for secondary processing
         self.file_contents = {}      
         
-        # --- OPS & REPORTING ---
+        #OPS & REPORTING
         self.cleaning_report = []
         self.file_chunk_counts = {}
         self.indexing_errors = [] # JSON-serializable list of UI error cards
         self.index_embedding_model = None # Safety check to ensure model/vector alignment
         
-        # --- ML ENGINE (Statistical / TF-IDF) ---
+        # ML ENGINE (Statistical / TF-IDF)
         # The vectorizer transforms text into a sparse frequency matrix.
         self.vectorizer = TfidfVectorizer(stop_words='english')
         self.tfidf_matrix = None     
         self.lemmatizer = WordNetLemmatizer()
 
-        # --- DL ENGINE (Neural / Embeddings) ---
+        # DL ENGINE (Neural / Embeddings)
         # Dense vectors generated via Ollama.
         self.embeddings = None       
         self._embed_cache = {}       # Local JSON-backed cache to avoid re-embedding
@@ -106,11 +106,7 @@ class KnowledgeBase:
         self.neural_threshold = 0.35 # Mathematical cutoff for 'relevance'
 
 
-
-
-    # ------------------------------------------------------------------
     # PHASE 1: DISCOVERY & CACHING
-    # ------------------------------------------------------------------
 
     def _get_text_hash(self, text):
         """Generates a fingerprint for a text chunk to prevent redundant embedding calls."""
@@ -153,9 +149,7 @@ class KnowledgeBase:
         self.file_contents = {}
         self.documents_metadata = []
 
-    # ------------------------------------------------------------------
     # PHASE 2: THE PREPROCESSING PIPELINE
-    # ------------------------------------------------------------------
 
     def clean_text(self, text):
         """
@@ -188,9 +182,7 @@ class KnowledgeBase:
         
         return re.sub(r'\s+', ' ', text).strip()
 
-    # ------------------------------------------------------------------
     # PHASE 3: INGESTION & CHUNKING
-    # ------------------------------------------------------------------
 
     def process_text(self, filename, raw_text, page_num=1, full_path=None):
         """
@@ -517,9 +509,7 @@ class KnowledgeBase:
             "galaxy_map": galaxy_map
         }
 
-    # ------------------------------------------------------------------
     # PHASE 5: THE RETRIEVAL ENGINE
-    # ------------------------------------------------------------------
 
     def search(self, query_text, llm_service=None, top_n=None):
         """
@@ -578,7 +568,7 @@ class KnowledgeBase:
         q_vec = np.array(llm.embed_text(query))
         if q_vec.size == 0: return []
         
-        # --- DIMENSION GUARDRAIL ---
+        #  DIMENSION GUARDRAIL
         # If the user switched models (e.g., Nomic -> Gemma) without re-indexing,
         # the math will fail as the vectors have different lengths.
         if q_vec.shape[0] != self.embeddings.shape[1]:
@@ -615,9 +605,7 @@ class KnowledgeBase:
         """Returns a list of all unique filenames currently in the Knowledge Base."""
         return sorted(list(self.file_contents.keys()))
 
-    # ------------------------------------------------------------------
     # PHASE 6: PERSISTENCE (Save/Load)
-    # ------------------------------------------------------------------
 
     def save_to_disk(self, save_dir="data/index"):
         """Serializes the current knowledge state to disk."""

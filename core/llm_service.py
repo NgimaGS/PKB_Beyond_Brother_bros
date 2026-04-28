@@ -49,9 +49,7 @@ class OllamaService:
             "total_tokens": 0
         }
 
-    # ------------------------------------------------------------------
     # 1. NEURAL CORE (Embeddings)
-    # ------------------------------------------------------------------
 
     def embed_text(self, text: str) -> list[float]:
         """
@@ -95,9 +93,7 @@ class OllamaService:
             return []
 
 
-    # ------------------------------------------------------------------
     # 2. SYSTEM HEALTH (Connectivity)
-    # ------------------------------------------------------------------
 
     def is_available(self) -> bool:
         """
@@ -173,9 +169,7 @@ class OllamaService:
         """Forces a fresh heart-beat check on the next availability request."""
         self._available = None
 
-    # ------------------------------------------------------------------
     # 3. CONTEXTUAL INTELLIGENCE (RAG & Chat)
-    # ------------------------------------------------------------------
 
     def _build_rag_messages(self, query: str, context_text: str,
                              chat_history: list[dict] | None = None,
@@ -190,7 +184,6 @@ class OllamaService:
         2. **Grounding**: The specific file manifest and retrieval context.
         3. **Constraints**: Formatting rules to prevent 'context-leaking' or hallucinations.
         """
-
         system_prompt = ""
         if agent_context:
             system_prompt += f"{agent_context}\n\n"
@@ -215,10 +208,7 @@ class OllamaService:
             "- Provide absolute paths ONLY if specifically asked for the file location or path.\n"
             "- Keep technical explanations precise."
         )
-
-
         messages = [{"role": "system", "content": system_prompt}]
-
         # Append last 5 turns of history for conversational memory
         if chat_history:
             relevant_history = [m for m in chat_history if m.get("role") in ("user", "assistant")][-5:]
